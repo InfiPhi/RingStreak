@@ -3,8 +3,8 @@ export interface StreakPerson {
   name?: string;
   email?: string;
   phone?: string | string[];
+  phones?: string[];
   organization?: string;
-  // TODO: confirm where custom fields live on People
   fields?: Record<string, any>;
   [k: string]: any;
 }
@@ -18,11 +18,11 @@ export interface StreakBox {
   [k: string]: any;
 }
 
-// TODO: expand with other useful fields from Streak API
 export interface MatchResult {
   score: number;
   contact: StreakPerson;
   box?: StreakBox;
+  links: { openBox?: string; openPerson?: string };
 }
 
 export interface LookupResponse {
