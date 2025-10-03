@@ -41,6 +41,19 @@ app.post("/searchfor/call", async (req, res) => {
   }
 });
 
+import { searchAll } from "./streak.js";
+
+app.get("/debug/search", async (req, res) => {
+  try {
+    const q = String(req.query.q || "");
+    const r = await searchAll(q);
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "debug search failed" });
+  }
+});
+
+
 app.listen(port, () =>
   console.log(`Streak side listening on ${env.APP_BASE_URL} (env: ${env.NODE_ENV})`)
 );

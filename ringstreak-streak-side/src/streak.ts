@@ -18,11 +18,6 @@ export async function searchAll(query: string): Promise<any> {
   return get<any>(`/search?query=${encodeURIComponent(query)}`);
 }
 
-export async function getContact(contactKey: string): Promise<any> {
-  return get<any>(`/contacts/${contactKey}`);
-}
-
-
 export async function getBoxesForContact(contactKey: string): Promise<StreakBox[]> {
   try {
     return await get<StreakBox[]>(`/contacts/${contactKey}/boxes`);
@@ -31,7 +26,6 @@ export async function getBoxesForContact(contactKey: string): Promise<StreakBox[
   }
 }
 
-
 export function boxUrl(b: StreakBox) {
   return `https://www.streak.com/p/${b.key}`;
 }
@@ -39,20 +33,17 @@ export function contactUrl(contactKey: string) {
   return `https://www.streak.com/contacts/${contactKey}`;
 }
 
-export function mapContactToPerson(raw: any): StreakPerson {
-  const phones = ([] as string[]).concat(
-    ...(Array.isArray(raw?.phoneNumbers) ? [raw.phoneNumbers] : []),
-    raw?.phone ? [raw.phone] : [],        
-    raw?.phones ? raw.phones : []             
-  ).filter(Boolean).map(String);
+export function mapSearchContactToPerson(raw: any): StreakPerson {
+  const phones = Array.isArray(raw?.phoneNumbers) ? raw.phoneNumbers : [];
+  const emails = Array.isArray(raw?.emailAddresses) ? raw.emailAddresses : [];
 
   return {
-    key: raw?.key ?? raw?.contactKey ?? "",
-    name: raw?.name,
-    email: raw?.email,
-    phone: phones.length === 1 ? phones[0] : undefined,
-    phones: phones.length > 1 ? phones : undefined,
-    organization: raw?.organization,
-    fields: raw?.fields ?? {},
+    key: raw?.key ?? "",
+    name: raw?.givenName ?? raw?.name,
+    email: emails[0],
+    phone: phones.length === 1 ? String(phones[0]) : undefined,
+    phones: phones.length > 1 ? phones.map(String) : undefined,
+    organization: raw?.organizationName || raw?.organization,
+    fields: {}, 
   };
 }
