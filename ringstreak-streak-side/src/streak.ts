@@ -53,8 +53,8 @@ export function splitSearchResults(raw: any): { contacts: any[]; boxes: any[] } 
   return { contacts, boxes };
 }
 
-export const boxUrl = (b: StreakBox) => `https://www.streak.com/p/${b.key}`;
-export const contactUrl = (contactKey: string) => `https://www.streak.com/contacts/${contactKey}`;
+export const boxUrl = (b: StreakBox) => `https://www.streak.com/p/${encodeURIComponent(b.key)}`;
+export const contactUrl = (contactKey: string) => `https://www.streak.com/contacts/${encodeURIComponent(contactKey)}`;
 
 export const contactOrg = (row: any): string | undefined =>
   row?.organizationName || row?.organization || undefined;
@@ -183,26 +183,33 @@ export async function getLatestThreadFromTimeline(boxKey: string): Promise<any |
   }
 }
 
-export async function getLastEmailPreview(boxKey: string): Promise<string | null> {
+export async function getLastEmailDetails(boxKey: string): Promise<{ subject: string; snippet: string; timestamp: number } | null> {
   const t2 = await getLatestThreadFromTimeline(boxKey);
   if (t2) {
-    const subj = t2.subject || t2.title || "(no subject)";
-    const prev = t2.snippet || t2.preview || t2.lastMessageSnippet || "";
-    const txt = `${subj} — ${prev}`.trim();
-    return txt || null;
+    return {
+      subject: t2.subject || t2.title || "(no subject)",
+      snippet: t2.snippet || t2.preview || t2.lastMessageSnippet || "",
+      timestamp: Number(t2.timestamp || t2.lastUpdatedTimestamp || 0)
+    };
   }
-
   const v1 = await getThreadsForBox(boxKey);
   if (v1.length) {
     v1.sort((a: any, b: any) => (b.lastUpdatedTimestamp ?? 0) - (a.lastUpdatedTimestamp ?? 0));
     const th = v1[0];
-    const subj = th.subject || th.title || "(no subject)";
-    const prev = th.snippet || th.preview || th.lastMessageSnippet || "";
-    const txt = `${subj} — ${prev}`.trim();
-    return txt || null;
+    return {
+      subject: th.subject || th.title || "(no subject)",
+      snippet: th.snippet || th.preview || th.lastMessageSnippet || "",
+      timestamp: Number(th.lastUpdatedTimestamp || 0)
+    };
   }
-
   return null;
+}
+
+export async function getLastEmailPreview(boxKey: string): Promise<string | null> {
+  const d = await getLastEmailDetails(boxKey);
+  if (!d) return null;
+  const txt = `${d.subject} — ${d.snippet}`.trim();
+  return txt || null;
 }
 
 export async function createCallLogOnBox(boxKey: string, notes: string, startISO: string, durationMs: number) {

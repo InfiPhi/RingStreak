@@ -18,7 +18,6 @@ app.get("/events", (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.flushHeaders?.();
-
   const id = nextId++;
   clients.set(id, { id, res });
   res.write(`event: ping\ndata: {}\n\n`);
@@ -30,6 +29,17 @@ function broadcast(type: string, data: any) {
   for (const { res } of clients.values()) {
     try { res.write(payload); } catch {}
   }
+}
+
+const POP_TTL_MS = 15000;
+const popped = new Map<string, number>();
+function shouldPop(sessionId?: string) {
+  if (!sessionId) return true;
+  const now = Date.now();
+  const last = popped.get(sessionId) || 0;
+  if (now - last < POP_TTL_MS) return false;
+  popped.set(sessionId, now);
+  return true;
 }
 
 app.post("/rc/webhook", async (req, res) => {
@@ -51,8 +61,8 @@ app.post("/rc/webhook", async (req, res) => {
     const direction: string = (first?.direction || body?.direction || "Inbound").toLowerCase();
     const status: string = (first?.status?.code || first?.status || body?.status || "").toLowerCase();
 
-    const interesting = new Set(["answered", "connected"]);
-    if (!status || !interesting.has(status)) return;
+    const early = new Set(["setup","proceeding","ringing","answered","connected"]);
+    if (!status || !early.has(status)) return;
 
     const from = first?.from?.phoneNumber || body?.from?.phoneNumber || "";
     const to   = first?.to?.phoneNumber   || body?.to?.phoneNumber   || "";
@@ -81,44 +91,41 @@ app.post("/rc/webhook", async (req, res) => {
 
     const lookup: LookupResult = await fetchLookup(from, to, direction, sessionId) as LookupResult;
 
-    const contactPhones = Array.isArray(lookup?.person?.phones)
-      ? lookup.person.phones
-      : (lookup?.person?.phone ? [lookup.person.phone] : []);
+      const contactPhones = Array.isArray(lookup?.person?.phones)
+        ? lookup.person.phones
+        : (lookup?.person?.phone ? [lookup.person.phone] : []);
 
-    const top = lookup?.boxKey ? {
-      company: lookup?.person?.organization || "",
-      contact: lookup?.person?.name || "",
-      contactEmail: lookup?.person?.email || "",
-      contactPhones,
-      project: lookup?.boxName || "",
-      stage: lookup?.stageName || "",
-      link: lookup?.link || "",
-      preview: lookup?.preview || null,
-      lastEmailSubject: lookup?.lastEmailSubject || null,
-      lastEmailAt: lookup?.lastEmailAt || null
-    } : null;
+      const top = lookup?.boxKey ? {
+        company: lookup?.person?.organization || "",
+        contact: lookup?.person?.name || "",
+        contactEmail: lookup?.person?.email || "",
+        contactPhones,
+        project: lookup?.boxName || "",
+        stage: (lookup as any)?.stageName || "",
+        link: lookup?.link || "",
+        preview: lookup?.preview || null,
+        lastEmailSubject: lookup?.lastEmailSubject || null,
+        lastEmailAt: lookup?.lastEmailAt || null
+      } : null;
 
-    const others = Array.isArray(lookup?.others) ? lookup.others.map((o: any) => ({
-      project: o.boxName || "",
-      stage: o.stageName || "",
-      link: o.link || ""
-    })) : [];
+      const others = Array.isArray(lookup?.others) ? lookup.others.map((o: any) => ({
+        project: o?.boxName || "",
+        stage: o?.stageName || "",
+        link: o?.link || ""
+      })) : [];
 
-    broadcast("call", {
-      direction, from, to, callId: sessionId,
-      top, others
-    });
+      broadcast("call", { direction, from, to, callId: sessionId, top, others });
 
-    if (top) {
-      const stage = top.stage ? ` · Stage: ${top.stage}` : "";
-      console.log(`✅ ${top.project}${stage}`);
-      if (top.link) console.log(`   ${top.link}`);
-      if (top.lastEmailSubject) console.log(`   Last email: ${top.lastEmailSubject}`);
-    } else if (lookup?.person?.name) {
-      console.log(`ℹ️ Found contact "${lookup.person.name}" — no box linked yet`);
-    } else {
-      console.log(`🕵️ No match for ${direction === "outbound" ? to : from}`);
-    }
+      if (top) {
+        const stageNote = top.stage ? ` · Stage: ${top.stage}` : "";
+        console.log(`✅ ${top.project}${stageNote}`);
+        if (top.link) console.log(`   ${top.link}`);
+        if (top.lastEmailSubject) console.log(`   Last email: ${top.lastEmailSubject}`);
+      } else if (lookup?.person?.name) {
+        console.log(`ℹ️ Found contact "${lookup.person.name}" — no box linked yet`);
+      } else {
+        console.log(`🕵️ No match for ${direction === "outbound" ? to : from}`);
+      }
 
     console.log(`[RC] ${direction} ${status}  from=${from}  to=${to}  session=${sessionId}`);
   } catch (err: any) {
@@ -154,7 +161,7 @@ app.post("/rc/debug/simulate", async (req, res) => {
 const port = Number(env.PORT || 8082);
 app.listen(port, () => {
   console.log(`📞 RC side listening on ${env.APP_BASE_URL}`);
-  console.log(`→ POST ${env.APP_BASE_URL}/rc/webhook (RingCentral will call this)`);
-  console.log(`→ GET  ${env.APP_BASE_URL}/rc/bootstrap (creates subscription)`);
-  console.log(`→ GET  ${env.APP_BASE_URL}/events (SSE stream for Electron)`);
+  console.log(`→ POST ${env.APP_BASE_URL}/rc/webhook`);
+  console.log(`→ GET  ${env.APP_BASE_URL}/rc/bootstrap`);
+  console.log(`→ GET  ${env.APP_BASE_URL}/events`);
 });

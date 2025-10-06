@@ -2,7 +2,7 @@ import express from "express";
 import { env } from "./env.js";
 import { normalizeToE164, variants } from "./normalize.js";
 import { lookupByPhone as findMatches } from "./match.js";
-import { searchAll, boxUrl, createCallLogOnBox } from "./streak.js";
+import { searchAll, boxUrl, getStageMap, getLastEmailDetails, getLastEmailPreview } from "./streak.js";
 
 const app = express();
 app.use(express.json());
@@ -42,6 +42,15 @@ async function handleIngest(req: express.Request, res: express.Response) {
     const box = best?.box as any | undefined;
     const person = best?.contact;
 
+    let stageName = box?.stageName;
+    if (!stageName && box?.pipelineKey && box?.stageKey) {
+      const map = await getStageMap(box.pipelineKey).catch(() => ({} as Record<string,string>));
+      stageName = map[box.stageKey];
+    }
+
+    const last = box ? await getLastEmailDetails(box.key) : null;
+    const preview = box ? await getLastEmailPreview(box.key) : null;
+
     const others = matches.slice(1).map((m: any) => {
       const b = m?.box || {};
       return {
@@ -52,18 +61,22 @@ async function handleIngest(req: express.Request, res: express.Response) {
       };
     });
 
+    const contactPhones = person?.phones || (person?.phone ? [String(person.phone)] : undefined);
+
     const out = {
       ok: true,
       found: Boolean(box),
       phone: resp.normalized || normalizeToE164(String(phone)) || String(phone),
       person: person
-        ? { key: person.key, name: person.name, email: person.email, organization: person.organization }
+        ? { key: person.key, name: person.name, email: person.email, organization: person.organization, phones: contactPhones }
         : undefined,
       boxKey: box?.key,
       boxName: box?.name,
-      stageName: box?.stageName,
+      stageName,
       link: box ? boxUrl(box) : undefined,
-      preview: box?.lastEmail,
+      lastEmailSubject: last?.subject || null,
+      lastEmailAt: last?.timestamp ? new Date(Number(last.timestamp)).toISOString() : null,
+      preview,
       others,
     };
 
@@ -75,18 +88,6 @@ async function handleIngest(req: express.Request, res: express.Response) {
 
 app.post("/ingest/call", handleIngest);
 app.post("/searchfor/call", handleIngest);
-
-app.post("/log/call", async (req, res) => {
-  try {
-    if (SHARED && req.header("x-ringstreak-secret") !== SHARED) return res.sendStatus(401);
-    const { boxKey, notes, startISO, durationMs } = req.body || {};
-    if (!boxKey || !startISO) return res.status(400).json({ ok: false, error: "boxKey and startISO required" });
-    const data = await createCallLogOnBox(String(boxKey), String(notes || ""), String(startISO), Number(durationMs || 0));
-    res.json({ ok: true, data });
-  } catch (e: any) {
-    res.status(500).json({ ok: false, error: e?.message || "log failed" });
-  }
-});
 
 app.get("/debug/search", async (req, res) => {
   try {
