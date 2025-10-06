@@ -20,13 +20,18 @@ async function mkMatch(person: StreakPerson | null, box?: StreakBox): Promise<Ma
     openPerson: person ? contactUrl(person.key) : undefined,
     openBox: box ? boxUrl(box) : undefined,
   };
+
   let stageName: string | undefined;
   if (box?.pipelineKey && box.stageKey) {
     const map = await getStageMap(box.pipelineKey).catch(() => ({} as Record<string, string>));
     stageName = map[box.stageKey];
   }
+
+  // Last email preview via Streak (timeline v2 → threads v1 fallback lives inside streak.ts)
   const lastEmail = box ? await getLastEmailPreview(box.key) : null;
+
   const enrichedBox = box ? { ...box, stageName, lastEmail } : undefined;
+
   return {
     score: box ? 2 : 1,
     contact: person ?? ({ key: "unknown" } as StreakPerson),
@@ -42,9 +47,11 @@ export async function lookupByPhone(input: string): Promise<LookupResponse> {
   const want = digits(norm);
   const want10 = want.slice(-10);
 
+  // 1) Streak search
   const raw = await searchAll(want).catch(() => null);
   const { contacts: contactRows } = splitSearchResults(raw || {});
 
+  // 2) True phone matches + collect boxes using the *search row* (handles v2 global → v1 numeric)
   const matchedPeople: StreakPerson[] = [];
   const boxMap = new Map<string, StreakBox>();
 
@@ -53,8 +60,9 @@ export async function lookupByPhone(input: string): Promise<LookupResponse> {
     const phones = [
       ...(p.phone ? [p.phone] : []),
       ...(Array.isArray(p.phones) ? p.phones : []),
-      ...(Array.isArray(row?.phoneNumbers) ? row.phoneNumbers.map(String) : []),
+      ...(Array.isArray((row as any)?.phoneNumbers) ? (row as any).phoneNumbers.map(String) : []),
     ].filter((x): x is string => typeof x === "string");
+
     const hit = phones.map(digits).some((d) => d === want || d.endsWith(want10));
     if (hit) {
       matchedPeople.push(p);
@@ -66,6 +74,7 @@ export async function lookupByPhone(input: string): Promise<LookupResponse> {
   const primaryPerson = matchedPeople[0] || null;
   const orgNameFromContacts = contactRows.map(contactOrg).find(Boolean);
 
+  // 3) Fallbacks to find boxes even if not explicitly linked
   if (boxMap.size === 0 && orgNameFromContacts) {
     const rawCompany = await searchAll(orgNameFromContacts).catch(() => null);
     const boxesCompany = Array.isArray(rawCompany?.results?.boxes) ? rawCompany.results.boxes : [];
@@ -93,6 +102,7 @@ export async function lookupByPhone(input: string): Promise<LookupResponse> {
     }
   }
 
+  // 4) Sort by recency and assemble matches
   const boxes = Array.from(boxMap.values()).sort(
     (a, b) => (b.lastUpdatedTimestamp ?? 0) - (a.lastUpdatedTimestamp ?? 0)
   );

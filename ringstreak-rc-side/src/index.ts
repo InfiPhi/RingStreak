@@ -16,16 +16,13 @@ app.get("/events", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
-  res.setHeader("Access-Control-Allow-Origin", "*"); 
+  res.setHeader("Access-Control-Allow-Origin", "*");
   res.flushHeaders?.();
 
   const id = nextId++;
   clients.set(id, { id, res });
   res.write(`event: ping\ndata: {}\n\n`);
-
-  req.on("close", () => {
-    clients.delete(id);
-  });
+  req.on("close", () => clients.delete(id));
 });
 
 function broadcast(type: string, data: any) {
@@ -60,22 +57,51 @@ app.post("/rc/webhook", async (req, res) => {
     const from = first?.from?.phoneNumber || body?.from?.phoneNumber || "";
     const to   = first?.to?.phoneNumber   || body?.to?.phoneNumber   || "";
 
-    const lookup = await fetchLookup(from, to, direction, sessionId) as { person?: { name?: string; organization?: string }, boxKey?: string, boxName?: string, stageName?: string, link?: string, preview?: any, others?: any[] };
+    type LookupResult = {
+      person?: {
+        name?: string;
+        email?: string;
+        organization?: string;
+        phones?: string[];
+        phone?: string;
+      };
+      boxKey?: string;
+      boxName?: string;
+      stageName?: string;
+      link?: string;
+      preview?: any;
+      lastEmailSubject?: string;
+      lastEmailAt?: string;
+      others?: Array<{
+        boxName?: string;
+        stageName?: string;
+        link?: string;
+      }>;
+    };
 
-    const hasBoxKey = (lookup as any)?.boxKey;
-    const top = hasBoxKey ? {
-      company: (lookup as any)?.person?.organization || "",
-      contact: (lookup as any)?.person?.name || "",
-      project: (lookup as any)?.boxName || "",
-      stage: (lookup as any)?.stageName || "",
-      link: (lookup as any)?.link || "",
-      preview: (lookup as any)?.preview || null
+    const lookup: LookupResult = await fetchLookup(from, to, direction, sessionId) as LookupResult;
+
+    const contactPhones = Array.isArray(lookup?.person?.phones)
+      ? lookup.person.phones
+      : (lookup?.person?.phone ? [lookup.person.phone] : []);
+
+    const top = lookup?.boxKey ? {
+      company: lookup?.person?.organization || "",
+      contact: lookup?.person?.name || "",
+      contactEmail: lookup?.person?.email || "",
+      contactPhones,
+      project: lookup?.boxName || "",
+      stage: lookup?.stageName || "",
+      link: lookup?.link || "",
+      preview: lookup?.preview || null,
+      lastEmailSubject: lookup?.lastEmailSubject || null,
+      lastEmailAt: lookup?.lastEmailAt || null
     } : null;
 
     const others = Array.isArray(lookup?.others) ? lookup.others.map((o: any) => ({
       project: o.boxName || "",
       stage: o.stageName || "",
-      link: o.link || "",
+      link: o.link || ""
     })) : [];
 
     broadcast("call", {
@@ -87,11 +113,11 @@ app.post("/rc/webhook", async (req, res) => {
       const stage = top.stage ? ` · Stage: ${top.stage}` : "";
       console.log(`✅ ${top.project}${stage}`);
       if (top.link) console.log(`   ${top.link}`);
-      if (top.preview) console.log(`   ${String(top.preview).slice(0, 140)}…`);
+      if (top.lastEmailSubject) console.log(`   Last email: ${top.lastEmailSubject}`);
     } else if (lookup?.person?.name) {
-      console.log(`Found contact "${lookup.person.name}" — no box linked yet`);
+      console.log(`ℹ️ Found contact "${lookup.person.name}" — no box linked yet`);
     } else {
-      console.log(`No match for ${direction === "outbound" ? to : from}`);
+      console.log(`🕵️ No match for ${direction === "outbound" ? to : from}`);
     }
 
     console.log(`[RC] ${direction} ${status}  from=${from}  to=${to}  session=${sessionId}`);
@@ -127,8 +153,8 @@ app.post("/rc/debug/simulate", async (req, res) => {
 
 const port = Number(env.PORT || 8082);
 app.listen(port, () => {
-  console.log(`RC side listening on ${env.APP_BASE_URL}`);
-  console.log(`→ POST ${env.APP_BASE_URL}/rc/webhook`);
-  console.log(`→ GET  ${env.APP_BASE_URL}/rc/bootstrap `);
-  console.log(`→ GET  ${env.APP_BASE_URL}/events`);
+  console.log(`📞 RC side listening on ${env.APP_BASE_URL}`);
+  console.log(`→ POST ${env.APP_BASE_URL}/rc/webhook (RingCentral will call this)`);
+  console.log(`→ GET  ${env.APP_BASE_URL}/rc/bootstrap (creates subscription)`);
+  console.log(`→ GET  ${env.APP_BASE_URL}/events (SSE stream for Electron)`);
 });

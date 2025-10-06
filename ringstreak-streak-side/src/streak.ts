@@ -4,7 +4,6 @@ import type { StreakBox, StreakPerson } from "./types.js";
 
 const AUTH = "Basic " + Buffer.from(env.STREAK_API_KEY + ":").toString("base64");
 
-// Support both /api/v1 and /api/v2 bases from a single env var
 const API_BASE_V1 = env.STREAK_API_BASE.replace(/\/api\/v2\b/, "/api/v1");
 const API_BASE_V2 = env.STREAK_API_BASE.includes("/api/v2")
   ? env.STREAK_API_BASE
@@ -54,24 +53,6 @@ export function splitSearchResults(raw: any): { contacts: any[]; boxes: any[] } 
   return { contacts, boxes };
 }
 
-const digitsOnly = (s: string) => String(s || "").replace(/\D+/g, "");
-const samePhoneish = (a: string, b: string) => {
-  const ad = digitsOnly(a);
-  const bd = digitsOnly(b);
-  if (!ad || !bd) return false;
-  if (ad === bd) return true;
-  return ad.slice(-10) === bd.slice(-10);
-};
-
-export function normalizeToE164(num?: string | null): string | null {
-  if (!num) return null;
-  const d = digitsOnly(num);
-  if (!d) return null;
-  if (d.length === 10) return `+1${d}`;
-  if (d.length === 11 && d.startsWith("1")) return `+${d}`;
-  return num.startsWith("+") ? num : `+${d}`;
-}
-
 export const boxUrl = (b: StreakBox) => `https://www.streak.com/p/${b.key}`;
 export const contactUrl = (contactKey: string) => `https://www.streak.com/contacts/${contactKey}`;
 
@@ -86,7 +67,6 @@ function decodeGlobalId(maybeGlobalId: string): { type?: string; id?: string } |
       padded.replace(/-/g, "+").replace(/_/g, "/"),
       "base64"
     ).toString("utf-8");
-    // e.g. "TeamContact,~~streaklongid~~4984590171717632"
     const m = decoded.match(/^([^,]+),~~[^~]+~~(.+)$/);
     if (m) return { type: m[1], id: m[2] };
   } catch {}
@@ -100,11 +80,6 @@ async function safeGetJsonV2(path: string): Promise<any | null> {
   try { return await getV2<any>(path); } catch { return null; }
 }
 
-/**
- * Robustly fetch boxes for a contact row returned by search:
- * - Try v2 with the global key
- * - Fallback to v1 using numeric contactKey (direct or decoded from the global key)
- */
 export async function getBoxesForSearchRow(raw: any): Promise<StreakBox[]> {
   const globalKey = raw?.key ? String(raw.key) : null;
   if (globalKey) {
@@ -165,7 +140,6 @@ export async function getStageMap(pipelineKey: string): Promise<Record<string, s
 export function mapSearchContactToPerson(raw: any): StreakPerson {
   const phones = Array.isArray(raw?.phoneNumbers) ? raw.phoneNumbers : [];
   const emails = Array.isArray(raw?.emailAddresses) ? raw.emailAddresses : [];
-  // Keep whatever key we can; box fetching uses the raw row via getBoxesForSearchRow
   const key =
     raw?.key ||
     raw?.contactKey ||
