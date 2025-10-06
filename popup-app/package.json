@@ -1,0 +1,20 @@
+{
+  "name": "ringstreak-popup",
+  "version": "0.1.0",
+  "main": "dist/main.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "dev": "concurrently \"tsc -w\" \"wait-on dist/main.js && electron .\"",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^31.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "concurrently": "^8.2.2",
+    "typescript": "^5.6.3",
+    "wait-on": "^7.2.0"
+  }
+}

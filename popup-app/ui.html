@@ -1,0 +1,125 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>RingStreak</title>
+  <style>
+    :root { --bg:#0b1020; --card:#121a33; --text:#eef2ff; --muted:#9aa3b2; --accent:#6aa4ff; }
+    *{ box-sizing:border-box; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; }
+    body{ margin:0; background:var(--bg); color:var(--text); }
+    .wrap{ padding:16px; }
+    .card{ background:var(--card); border-radius:14px; padding:14px 16px; box-shadow: 0 4px 24px rgba(0,0,0,.35); }
+    .title{ font-size:18px; font-weight:700; margin:0 0 4px; }
+    .sub{ color:var(--muted); margin:2px 0; font-size:13px; }
+    .row{ margin-top:10px; }
+    .label{ color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
+    .val{ font-size:15px; margin-top:2px; }
+    .link{ color:var(--accent); text-decoration:none; }
+    .list{ margin-top:12px; max-height:260px; overflow:auto; }
+    .item{ padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.06); margin-bottom:8px; }
+    .stage{ color:#a3d9a5; font-size:12px; }
+    .muted{ color:var(--muted); }
+    .preview{ margin-top:8px; color:var(--muted); font-size:12px; }
+    .header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+    .tag{ background:#1c2750; color:#cbd6ff; border-radius:999px; padding:4px 8px; font-size:11px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header">
+        <div class="title" id="project">—</div>
+        <div class="tag" id="direction">Inbound</div>
+      </div>
+      <div class="sub" id="contact">—</div>
+      <div class="sub" id="company">—</div>
+
+      <div class="row"><div class="label">Stage</div><div class="val" id="stage">—</div></div>
+      <div class="row"><div class="label">Link</div><div class="val"><a class="link" id="link" href="#" target="_blank">Open in Streak</a></div></div>
+      <div class="preview" id="preview"></div>
+    </div>
+
+    <div class="row" style="margin-top:14px;">
+      <div class="label">Other matches</div>
+      <div class="list" id="others"></div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const params = new URLSearchParams(location.search);
+  const EVENTS_URL = params.get("events");
+
+  const els = {
+    project: document.getElementById("project"),
+    contact: document.getElementById("contact"),
+    company: document.getElementById("company"),
+    stage: document.getElementById("stage"),
+    link: document.getElementById("link"),
+    preview: document.getElementById("preview"),
+    others: document.getElementById("others"),
+    direction: document.getElementById("direction")
+  };
+
+  function truncate(s, n){ return (s && s.length>n) ? s.slice(0,n-1)+"…" : (s||""); }
+
+  function render(payload){
+    const t = payload?.top;
+    els.direction.textContent = (payload?.direction||"").replace(/\b\w/g, c=>c.toUpperCase());
+    if (!t) {
+      els.project.textContent = "No project linked";
+      els.contact.textContent = "";
+      els.company.textContent = "";
+      els.stage.textContent = "—";
+      els.link.href = "#";
+      els.preview.textContent = "";
+    } else {
+      els.project.textContent = t.project || "—";
+      els.contact.textContent = t.contact ? `Contact: ${t.contact}` : "";
+      els.company.textContent = t.company ? `Company: ${t.company}` : "";
+      els.stage.textContent = t.stage || "—";
+      els.link.href = t.link || "#";
+      els.preview.textContent = t.preview ? truncate(String(t.preview), 180) : "";
+    }
+
+    els.others.innerHTML = "";
+    (payload?.others||[]).forEach(o=>{
+      const div = document.createElement("div");
+      div.className = "item";
+      const a = document.createElement("a");
+      a.href = o.link || "#";
+      a.target = "_blank";
+      a.className = "link";
+      a.textContent = o.project || "(Untitled)";
+      const stage = document.createElement("div");
+      stage.className = "stage";
+      stage.textContent = o.stage || "";
+      div.appendChild(a);
+      div.appendChild(stage);
+      els.others.appendChild(div);
+    });
+
+    if (window.ringstreak && typeof window.ringstreak.show === "function") {
+      window.ringstreak.show();
+    }
+  }
+
+  const es = new EventSource(EVENTS_URL, { withCredentials:false });
+  es.addEventListener("call", (ev)=> {
+    try{ render(JSON.parse(ev.data)); }catch(_){}
+  });
+  es.addEventListener("ping", ()=>{});
+
+  if (window.ringstreak && typeof window.ringstreak.onTest === "function") {
+    window.ringstreak.onTest(()=> {
+      render({
+        direction:"inbound",
+        top:{ company:"Acme Co", contact:"Dev", project:"Strop", stage:"Discovery", link:"#", preview:"Email snippet lorem ipsum..." },
+        others:[{project:"Monsters inc.", stage:"Negotiation", link:"#"}]
+      });
+    });
+  }
+})();
+</script>
+</body>
+</html>
