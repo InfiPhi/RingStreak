@@ -1,7 +1,8 @@
 import express from "express";
 import { env } from "./env.js";
 import { normalizeToE164, variants } from "./normalize.js";
-import { lookupByPhone } from "./match.js";
+import { lookupByPhone as findMatches } from "./match.js";
+import { searchAll, boxUrl, createCallLogOnBox } from "./streak.js";
 
 const app = express();
 app.use(express.json());
@@ -9,39 +10,83 @@ app.use(express.json());
 app.get("/health", (_req, res) => res.send("ALL GOOD"));
 
 const port = Number(env.PORT || 8081);
+const SHARED = env.SHARED_SECRET;
 
 app.get("/debug/normalize", (req, res) => {
   const raw = String(req.query.phone || "");
   const norm = normalizeToE164(raw);
   res.json({ raw, norm, variants: norm ? variants(norm) : [] });
 });
+
 app.get("/lookup", async (req, res) => {
   try {
     const phone = String(req.query.phone || "");
-    // Quick validation thats redundant at the moment but might grow later
     if (!phone) return res.status(400).json({ error: "Please provide a phone number :)" });
-    const data = await lookupByPhone(phone);
+    const data = await findMatches(phone);
     res.json(data);
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "Lookup failed" });
   }
 });
-app.post("/searchfor/call", async (req, res) => {
+
+async function handleIngest(req: express.Request, res: express.Response) {
   try {
-    if (env.SHARED_SECRET && req.header("x-ringstreak-secret") !== env.SHARED_SECRET) {
-      return res.sendStatus(401);
-    }
+    if (SHARED && req.header("x-ringstreak-secret") !== SHARED) return res.sendStatus(401);
     const { from, to } = req.body || {};
     const phone = from || to;
-    if (!phone) return res.status(400).json({ error: "from/to required" });
-    const data = await lookupByPhone(String(phone));
-    res.json({ ok: true, ...data });
+    if (!phone) return res.status(400).json({ ok: false, error: "from/to required" });
+
+    const resp = await findMatches(String(phone));
+    const matches = Array.isArray(resp?.matches) ? resp.matches : [];
+    const best = matches[0];
+    const box = best?.box as any | undefined;
+    const person = best?.contact;
+
+    const others = matches.slice(1).map((m: any) => {
+      const b = m?.box || {};
+      return {
+        boxKey: b.key,
+        boxName: b.name,
+        stageName: b.stageName,
+        link: b.key ? boxUrl(b) : undefined,
+      };
+    });
+
+    const out = {
+      ok: true,
+      found: Boolean(box),
+      phone: resp.normalized || normalizeToE164(String(phone)) || String(phone),
+      person: person
+        ? { key: person.key, name: person.name, email: person.email, organization: person.organization }
+        : undefined,
+      boxKey: box?.key,
+      boxName: box?.name,
+      stageName: box?.stageName,
+      link: box ? boxUrl(box) : undefined,
+      preview: box?.lastEmail,
+      others,
+    };
+
+    return res.json(out);
   } catch (err: any) {
-    res.status(500).json({ error: err?.message || "searchfor failed" });
+    return res.status(500).json({ ok: false, error: err?.message || "ingest failed" });
+  }
+}
+
+app.post("/ingest/call", handleIngest);
+app.post("/searchfor/call", handleIngest);
+
+app.post("/log/call", async (req, res) => {
+  try {
+    if (SHARED && req.header("x-ringstreak-secret") !== SHARED) return res.sendStatus(401);
+    const { boxKey, notes, startISO, durationMs } = req.body || {};
+    if (!boxKey || !startISO) return res.status(400).json({ ok: false, error: "boxKey and startISO required" });
+    const data = await createCallLogOnBox(String(boxKey), String(notes || ""), String(startISO), Number(durationMs || 0));
+    res.json({ ok: true, data });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || "log failed" });
   }
 });
-
-import { searchAll } from "./streak.js";
 
 app.get("/debug/search", async (req, res) => {
   try {
@@ -52,7 +97,6 @@ app.get("/debug/search", async (req, res) => {
     res.status(500).json({ error: e?.message || "debug search failed" });
   }
 });
-
 
 app.listen(port, () =>
   console.log(`Streak side listening on ${env.APP_BASE_URL} (env: ${env.NODE_ENV})`)
