@@ -63,10 +63,7 @@ function decodeGlobalId(maybeGlobalId: string): { type?: string; id?: string } |
   try {
     const pad = (-maybeGlobalId.length) % 4;
     const padded = pad ? maybeGlobalId + "=".repeat(pad) : maybeGlobalId;
-    const decoded = Buffer.from(
-      padded.replace(/-/g, "+").replace(/_/g, "/"),
-      "base64"
-    ).toString("utf-8");
+    const decoded = Buffer.from(padded.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8");
     const m = decoded.match(/^([^,]+),~~[^~]+~~(.+)$/);
     if (m) return { type: m[1], id: m[2] };
   } catch {}
@@ -89,7 +86,6 @@ export async function getBoxesForSearchRow(raw: any): Promise<StreakBox[]> {
       : Array.isArray(v2?.boxes) ? v2.boxes : [];
     if (arr2.length) return arr2.map(normalizeBox);
   }
-
   let numeric = raw?.contactKey ? String(raw.contactKey) : (raw?.id ? String(raw.id) : null);
   if (!numeric && globalKey) {
     const dec = decodeGlobalId(globalKey);
@@ -102,7 +98,6 @@ export async function getBoxesForSearchRow(raw: any): Promise<StreakBox[]> {
       : Array.isArray(v1?.boxes) ? v1.boxes : [];
     if (arr1.length) return arr1.map(normalizeBox);
   }
-
   return [];
 }
 
@@ -119,6 +114,10 @@ export async function getBoxesForContact(contactKey: string): Promise<StreakBox[
       return [];
     }
   }
+}
+
+export async function getBox(boxKey: string): Promise<any | null> {
+  return safeGetJsonV1(`/boxes/${encodeURIComponent(boxKey)}`);
 }
 
 const stageCache = new Map<string, Record<string, string>>();
@@ -140,6 +139,9 @@ export async function getStageMap(pipelineKey: string): Promise<Record<string, s
 export function mapSearchContactToPerson(raw: any): StreakPerson {
   const phones = Array.isArray(raw?.phoneNumbers) ? raw.phoneNumbers : [];
   const emails = Array.isArray(raw?.emailAddresses) ? raw.emailAddresses : [];
+  const given = String(raw?.givenName || "").trim();
+  const family = String(raw?.familyName || "").trim();
+  const full = [given, family].filter(Boolean).join(" ");
   const key =
     raw?.key ||
     raw?.contactKey ||
@@ -147,10 +149,9 @@ export function mapSearchContactToPerson(raw: any): StreakPerson {
     raw?.personKey ||
     raw?.contact_id ||
     "";
-
   return {
     key,
-    name: raw?.givenName ?? raw?.name,
+    name: full || raw?.name,
     email: emails[0],
     phone: phones.length === 1 ? String(phones[0]) : undefined,
     phones: phones.length > 1 ? phones.map(String) : undefined,

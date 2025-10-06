@@ -2,7 +2,7 @@ import express from "express";
 import { env } from "./env.js";
 import { normalizeToE164, variants } from "./normalize.js";
 import { lookupByPhone as findMatches } from "./match.js";
-import { searchAll, boxUrl, getStageMap, getLastEmailDetails, getLastEmailPreview } from "./streak.js";
+import { searchAll, boxUrl, getStageMap, getLastEmailDetails, getLastEmailPreview, getBox } from "./streak.js";
 
 const app = express();
 app.use(express.json());
@@ -42,10 +42,18 @@ async function handleIngest(req: express.Request, res: express.Response) {
     const box = best?.box as any | undefined;
     const person = best?.contact;
 
+    let pipelineKey = box?.pipelineKey;
+    let stageKey = box?.stageKey;
+    if (box?.key && (!pipelineKey || !stageKey)) {
+      const full = await getBox(box.key).catch(() => null);
+      pipelineKey = pipelineKey || full?.pipelineKey;
+      stageKey = stageKey || full?.stageKey;
+    }
+
     let stageName = box?.stageName;
-    if (!stageName && box?.pipelineKey && box?.stageKey) {
-      const map = await getStageMap(box.pipelineKey).catch(() => ({} as Record<string,string>));
-      stageName = map[box.stageKey];
+    if (!stageName && pipelineKey && stageKey) {
+      const map = await getStageMap(pipelineKey).catch(() => ({} as Record<string,string>));
+      stageName = map[stageKey];
     }
 
     const last = box ? await getLastEmailDetails(box.key) : null;

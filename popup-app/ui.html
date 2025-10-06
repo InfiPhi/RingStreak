@@ -9,19 +9,21 @@
     body{ margin:0; background:var(--bg); color:var(--text); }
     .wrap{ padding:16px; }
     .card{ background:var(--card); border-radius:14px; padding:14px 16px; box-shadow: 0 4px 24px rgba(0,0,0,.35); }
-    .title{ font-size:18px; font-weight:700; margin:0 0 4px; }
+    .title{ font-size:20px; font-weight:800; margin:0 0 6px; }
     .sub{ color:var(--muted); margin:2px 0; font-size:13px; }
     .row{ margin-top:10px; }
-    .label{ color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
-    .val{ font-size:15px; margin-top:2px; }
+    .label{ color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; }
+    .val{ font-size:15px; margin-top:3px; }
     .link{ color:var(--accent); text-decoration:none; word-break: break-all; }
-    .list{ margin-top:12px; max-height:220px; overflow:auto; }
+    .list{ margin-top:12px; max-height:240px; overflow:auto; }
     .item{ padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.06); margin-bottom:8px; }
     .stage{ color:#a3d9a5; font-size:12px; }
     .muted{ color:var(--muted); }
     .preview{ margin-top:6px; color:var(--muted); font-size:12px; }
-    .header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+    .header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
     .tag{ background:#1c2750; color:#cbd6ff; border-radius:999px; padding:4px 8px; font-size:11px; }
+    .kv{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .pill{ background:#1b2444; padding:3px 8px; border-radius:999px; font-size:12px; color:#cfd7f9; }
   </style>
 </head>
 <body>
@@ -31,14 +33,23 @@
         <div class="title" id="project">—</div>
         <div class="tag" id="direction">Inbound</div>
       </div>
+
       <div class="sub" id="contact">—</div>
       <div class="sub" id="company">—</div>
-      <div class="sub" id="contactMeta"></div>
+      <div class="kv sub" id="contactMeta"></div>
 
-      <div class="row"><div class="label">Stage</div><div class="val" id="stage">—</div></div>
-      <div class="row"><div class="label">Link</div><div class="val"><a class="link" id="link" href="#" target="_blank">Open in Streak</a></div></div>
+      <div class="row">
+        <div class="label">Stage</div>
+        <div class="val" id="stage">—</div>
+      </div>
 
-      <div class="row"><div class="label">Last email</div>
+      <div class="row">
+        <div class="label">Link</div>
+        <div class="val"><a class="link" id="link" href="#" target="_blank">Open in Streak</a></div>
+      </div>
+
+      <div class="row">
+        <div class="label">Last email</div>
         <div class="val" id="lastSubject">—</div>
         <div class="muted" id="lastWhen"></div>
         <div class="preview" id="preview"></div>
@@ -70,23 +81,27 @@
     direction: document.getElementById("direction")
   };
 
+  function pill(text){
+    const span = document.createElement("span");
+    span.className = "pill";
+    span.textContent = text;
+    return span;
+  }
   function truncate(s, n){ return (s && s.length>n) ? s.slice(0,n-1)+"…" : (s||""); }
   function fmtWhen(iso){
     if (!iso) return "";
-    try{
-      const d = new Date(iso);
-      return d.toLocaleString();
-    }catch{ return ""; }
+    try{ return new Date(iso).toLocaleString(); }catch{ return ""; }
   }
 
   function render(payload){
     const t = payload?.top;
     els.direction.textContent = (payload?.direction||"").replace(/\b\w/g, c=>c.toUpperCase());
+
     if (!t) {
       els.project.textContent = "No project linked";
       els.contact.textContent = "";
       els.company.textContent = "";
-      els.contactMeta.textContent = "";
+      els.contactMeta.innerHTML = "";
       els.stage.textContent = "—";
       els.link.href = "#";
       els.lastSubject.textContent = "—";
@@ -96,10 +111,12 @@
       els.project.textContent = t.project || "—";
       els.contact.textContent = t.contact ? `Contact: ${t.contact}` : "";
       els.company.textContent = t.company ? `Company: ${t.company}` : "";
-      const metaBits = [];
-      if (t.contactEmail) metaBits.push(t.contactEmail);
-      if (Array.isArray(t.contactPhones) && t.contactPhones.length) metaBits.push(t.contactPhones.join(" · "));
-      els.contactMeta.textContent = metaBits.join("  •  ");
+
+      els.contactMeta.innerHTML = "";
+      if (t.contactEmail) els.contactMeta.appendChild(pill(t.contactEmail));
+      if (Array.isArray(t.contactPhones) && t.contactPhones.length) {
+        els.contactMeta.appendChild(pill(t.contactPhones.join(" · ")));
+      }
 
       els.stage.textContent = t.stage || "—";
       els.link.href = t.link || "#";
