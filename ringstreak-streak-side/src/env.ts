@@ -8,7 +8,8 @@ const EnvSchema = z.object({
   STREAK_API_BASE: z.string().url(),
   STREAK_API_KEY: z.string().min(1, "STREAK_API_KEY is required"),
   STREAK_PIPELINE_KEY: z.string().optional(),
-  SHARED_SECRET: z.string().optional()
+  SHARED_SECRET: z.string().optional(),
+  GMAIL_USER_INDEX: z.string().default("0")
 });
 
 export type Env = z.infer<typeof EnvSchema>;

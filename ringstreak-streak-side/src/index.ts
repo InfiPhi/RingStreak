@@ -2,7 +2,10 @@ import express from "express";
 import { env } from "./env.js";
 import { normalizeToE164, variants } from "./normalize.js";
 import { lookupByPhone as findMatches } from "./match.js";
-import { searchAll, boxUrl, getStageMap, getLastEmailDetails, getLastEmailPreview, getBox } from "./streak.js";
+import {
+  searchAll, boxUrl, getStageMap, getLastEmailDetails,
+  getLastEmailPreview, getBox, getContactFull
+} from "./streak.js";
 
 const app = express();
 app.use(express.json());
@@ -40,14 +43,27 @@ async function handleIngest(req: express.Request, res: express.Response) {
     const matches = Array.isArray(resp?.matches) ? resp.matches : [];
     const best = matches[0];
     const box = best?.box as any | undefined;
-    const person = best?.contact;
+    let person = best?.contact as any | undefined;
+
+    if (person?.key && (!person?.email || !person?.phones || !person?.organization || !String(person.name || "").includes(" "))) {
+      const full = await getContactFull(String(person.key)).catch(() => null);
+      if (full) {
+        person = {
+          ...person,
+          name: full.name || person.name,
+          email: full.email || person.email,
+          phones: full.phones || person.phones,
+          organization: full.organization || person.organization
+        };
+      }
+    }
 
     let pipelineKey = box?.pipelineKey;
     let stageKey = box?.stageKey;
     if (box?.key && (!pipelineKey || !stageKey)) {
-      const full = await getBox(box.key).catch(() => null);
-      pipelineKey = pipelineKey || full?.pipelineKey;
-      stageKey = stageKey || full?.stageKey;
+      const fullBox = await getBox(box.key).catch(() => null);
+      pipelineKey = pipelineKey || fullBox?.pipelineKey;
+      stageKey = stageKey || fullBox?.stageKey;
     }
 
     let stageName = box?.stageName;
@@ -69,7 +85,7 @@ async function handleIngest(req: express.Request, res: express.Response) {
       };
     });
 
-    const contactPhones = person?.phones || (person?.phone ? [String(person.phone)] : undefined);
+    const contactPhones = person?.phones || (person?.phone ? [String(person?.phone)] : undefined);
 
     const out = {
       ok: true,

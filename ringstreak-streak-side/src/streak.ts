@@ -4,6 +4,8 @@ import type { StreakBox, StreakPerson } from "./types.js";
 
 const AUTH = "Basic " + Buffer.from(env.STREAK_API_KEY + ":").toString("base64");
 
+const gmailU = encodeURIComponent(String(env.GMAIL_USER_INDEX ?? "0"));
+
 const API_BASE_V1 = env.STREAK_API_BASE.replace(/\/api\/v2\b/, "/api/v1");
 const API_BASE_V2 = env.STREAK_API_BASE.includes("/api/v2")
   ? env.STREAK_API_BASE
@@ -42,10 +44,7 @@ export function normalizeBox(row: any): StreakBox {
     lastUpdatedTimestamp: row?.lastUpdatedTimestamp,
   };
 }
-
-export function mapSearchBox(row: any): StreakBox {
-  return normalizeBox(row);
-}
+export function mapSearchBox(row: any): StreakBox { return normalizeBox(row); }
 
 export function splitSearchResults(raw: any): { contacts: any[]; boxes: any[] } {
   const contacts = Array.isArray(raw?.results?.contacts) ? raw.results.contacts : [];
@@ -53,9 +52,11 @@ export function splitSearchResults(raw: any): { contacts: any[]; boxes: any[] } 
   return { contacts, boxes };
 }
 
-export const boxUrl = (b: StreakBox) => `https://www.streak.com/p/${encodeURIComponent(b.key)}`;
-export const contactUrl = (contactKey: string) => `https://www.streak.com/contacts/${encodeURIComponent(contactKey)}`;
+export const boxUrl = (b: { key: string }) =>
+  `https://mail.google.com/mail/u/${gmailU}/#box/${encodeURIComponent(b.key)}`;
 
+export const contactUrl = (contactKey: string) =>
+  `https://mail.google.com/mail/u/${gmailU}/#streak/contact/${encodeURIComponent(contactKey)}`;
 export const contactOrg = (row: any): string | undefined =>
   row?.organizationName || row?.organization || undefined;
 
@@ -110,9 +111,7 @@ export async function getBoxesForContact(contactKey: string): Promise<StreakBox[
     try {
       const rawV1 = await getV1<any[]>(`/contacts/${encodeURIComponent(contactKey)}/boxes`);
       return Array.isArray(rawV1) ? rawV1.map(normalizeBox) : [];
-    } catch {
-      return [];
-    }
+    } catch { return []; }
   }
 }
 
@@ -142,13 +141,7 @@ export function mapSearchContactToPerson(raw: any): StreakPerson {
   const given = String(raw?.givenName || "").trim();
   const family = String(raw?.familyName || "").trim();
   const full = [given, family].filter(Boolean).join(" ");
-  const key =
-    raw?.key ||
-    raw?.contactKey ||
-    raw?.id ||
-    raw?.personKey ||
-    raw?.contact_id ||
-    "";
+  const key = raw?.key || raw?.contactKey || raw?.id || raw?.personKey || raw?.contact_id || "";
   return {
     key,
     name: full || raw?.name,
@@ -164,44 +157,39 @@ export async function getThreadsForBox(boxKey: string): Promise<any[]> {
   try {
     const threads = await getV1<any[]>(`/boxes/${boxKey}/threads`);
     return Array.isArray(threads) ? threads : [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
+}
+
+/** Extractor that tolerates different shapes and names across tenants */
+function extractEmailMeta(it: any): {subject: string; snippet: string; timestamp: number} {
+  const subj = it?.subject ?? it?.title ?? it?.data?.subject ?? it?.entity?.subject ?? "(no subject)";
+  const snip = it?.snippet ?? it?.preview ?? it?.data?.snippet ?? it?.entity?.snippet ?? it?.lastMessageSnippet ?? "";
+  const ts = Number(it?.timestamp ?? it?.lastUpdatedTimestamp ?? it?.data?.timestamp ?? 0);
+  return { subject: String(subj), snippet: String(snip), timestamp: Number.isFinite(ts) ? ts : 0 };
 }
 
 export async function getLatestThreadFromTimeline(boxKey: string): Promise<any | null> {
   try {
     const data: any = await getV2<any>(`/boxes/${boxKey}/timeline?limit=10`);
     const items: any[] = Array.isArray(data?.items) ? data.items : [];
-    const threadItems = items.filter((it) =>
-      String(it?.type || it?.entityType || "").toLowerCase().includes("thread")
-    );
-    if (!threadItems.length) return null;
-    threadItems.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
-    return threadItems[0];
-  } catch {
-    return null;
-  }
+    const filtered = items.filter((it) => {
+      const t = String(it?.type || it?.entityType || it?.data?.type || "").toLowerCase();
+      return t.includes("email") || t.includes("gmail") || t.includes("thread");
+    });
+    if (!filtered.length) return null;
+    filtered.sort((a, b) => (extractEmailMeta(b).timestamp) - (extractEmailMeta(a).timestamp));
+    return filtered[0];
+  } catch { return null; }
 }
 
 export async function getLastEmailDetails(boxKey: string): Promise<{ subject: string; snippet: string; timestamp: number } | null> {
   const t2 = await getLatestThreadFromTimeline(boxKey);
-  if (t2) {
-    return {
-      subject: t2.subject || t2.title || "(no subject)",
-      snippet: t2.snippet || t2.preview || t2.lastMessageSnippet || "",
-      timestamp: Number(t2.timestamp || t2.lastUpdatedTimestamp || 0)
-    };
-  }
+  if (t2) return extractEmailMeta(t2);
   const v1 = await getThreadsForBox(boxKey);
   if (v1.length) {
-    v1.sort((a: any, b: any) => (b.lastUpdatedTimestamp ?? 0) - (a.lastUpdatedTimestamp ?? 0));
+    v1.sort((a: any, b: any) => ((b.lastUpdatedTimestamp ?? 0) - (a.lastUpdatedTimestamp ?? 0)));
     const th = v1[0];
-    return {
-      subject: th.subject || th.title || "(no subject)",
-      snippet: th.snippet || th.preview || th.lastMessageSnippet || "",
-      timestamp: Number(th.lastUpdatedTimestamp || 0)
-    };
+    return extractEmailMeta(th);
   }
   return null;
 }
@@ -213,6 +201,53 @@ export async function getLastEmailPreview(boxKey: string): Promise<string | null
   return txt || null;
 }
 
+/** Full contact fetch to guarantee email/name/org even when search row is sparse */
+export async function getContactFull(anyKey: string): Promise<StreakPerson | null> {
+  if (!anyKey) return null;
+
+  const fromV2 = await safeGetJsonV2(`/contacts/${encodeURIComponent(anyKey)}`);
+  if (fromV2 && typeof fromV2 === "object") {
+    const row = fromV2;
+    const phones = Array.isArray(row?.phoneNumbers) ? row.phoneNumbers.map(String) : [];
+    const emails = Array.isArray(row?.emailAddresses) ? row.emailAddresses.map(String) : [];
+    const given = String(row?.givenName || "").trim();
+    const family = String(row?.familyName || "").trim();
+    const full = [given, family].filter(Boolean).join(" ");
+    return {
+      key: anyKey,
+      name: full || row?.name,
+      email: emails[0],
+      phones: phones.length ? phones : undefined,
+      phone: phones.length === 1 ? phones[0] : undefined,
+      organization: row?.organizationName || row?.organization,
+      fields: {},
+    };
+  }
+
+  const dec = decodeGlobalId(anyKey);
+  const numeric = dec?.id || anyKey;
+  const fromV1 = await safeGetJsonV1(`/contacts/${encodeURIComponent(numeric)}`);
+  if (fromV1 && typeof fromV1 === "object") {
+    const row = fromV1;
+    const phones = Array.isArray(row?.phoneNumbers) ? row.phoneNumbers.map(String) : [];
+    const emails = Array.isArray(row?.emailAddresses) ? row.emailAddresses.map(String) : [];
+    const given = String(row?.givenName || "").trim();
+    const family = String(row?.familyName || "").trim();
+    const full = [given, family].filter(Boolean).join(" ");
+    return {
+      key: anyKey,
+      name: full || row?.name,
+      email: emails[0],
+      phones: phones.length ? phones : undefined,
+      phone: phones.length === 1 ? phones[0] : undefined,
+      organization: row?.organizationName || row?.organization,
+      fields: {},
+    };
+  }
+
+  return null;
+}
+
 export async function createCallLogOnBox(boxKey: string, notes: string, startISO: string, durationMs: number) {
   const url = `${API_BASE_V2}/boxes/${encodeURIComponent(boxKey)}/meetings`;
   const body = new URLSearchParams();
@@ -220,11 +255,7 @@ export async function createCallLogOnBox(boxKey: string, notes: string, startISO
   body.set("notes", notes || "");
   body.set("startTimestamp", String(new Date(startISO).getTime()));
   body.set("duration", String(Number.isFinite(durationMs) ? durationMs : 0));
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: AUTH, "Content-Type": "application/x-www-form-urlencoded" },
-    body
-  });
+  const r = await fetch(url, { method: "POST", headers: { Authorization: AUTH, "Content-Type": "application/x-www-form-urlencoded" }, body });
   if (!r.ok) {
     const text = await r.text().catch(() => "");
     throw new Error(`Streak CALL_LOG failed: ${r.status} ${text.slice(0, 200)}`);
