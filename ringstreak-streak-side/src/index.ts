@@ -3,8 +3,8 @@ import { env } from "./env.js";
 import { normalizeToE164, variants } from "./normalize.js";
 import { lookupByPhone as findMatches } from "./match.js";
 import {
-  searchAll, boxUrl, getStageMap, getLastEmailDetails,
-  getLastEmailPreview, getBox, getContactFull
+  searchAll, boxUrl, getLastEmailDetails,
+  getLastEmailPreview, getBox, getContactFull, resolveStageForBox
 } from "./streak.js";
 
 const app = express();
@@ -58,18 +58,10 @@ async function handleIngest(req: express.Request, res: express.Response) {
       }
     }
 
-    let pipelineKey = box?.pipelineKey;
-    let stageKey = box?.stageKey;
-    if (box?.key && (!pipelineKey || !stageKey)) {
-      const fullBox = await getBox(box.key).catch(() => null);
-      pipelineKey = pipelineKey || fullBox?.pipelineKey;
-      stageKey = stageKey || fullBox?.stageKey;
-    }
-
-    let stageName = box?.stageName;
-    if (!stageName && pipelineKey && stageKey) {
-      const map = await getStageMap(pipelineKey).catch(() => ({} as Record<string,string>));
-      stageName = map[stageKey];
+    let stageName: string | undefined;
+    if (box?.key) {
+      const stage = await resolveStageForBox(box).catch(() => ({} as any));
+      stageName = stage?.stageName;
     }
 
     const last = box ? await getLastEmailDetails(box.key) : null;
