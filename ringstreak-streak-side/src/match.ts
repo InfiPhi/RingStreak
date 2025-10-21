@@ -1,4 +1,4 @@
-import { normalizeToE164 } from "./normalize.js";
+import { normalizeToE164, variants as e164Variants } from "./normalize.js";
 import {
   searchAll,
   splitSearchResults,
@@ -14,7 +14,29 @@ import {
 } from "./streak.js";
 import type { LookupResponse, MatchResult, StreakBox, StreakPerson } from "./types.js";
 
-const digits = (s: string) => String(s || "").replace(/\D+/g, "");
+const onlyDigits = (s: string) => String(s || "").replace(/\D+/g, "");
+function buildPhoneQueries(e164: string) {
+  const d = onlyDigits(e164);
+  const last10 = d.slice(-10);
+  const set = new Set<string>();
+
+  for (const v of e164Variants(e164)) {
+    set.add(v);                     
+    set.add(onlyDigits(v));            
+  }
+
+  // Common extras
+  if (last10 && last10.length === 10) {
+    set.add(last10);                  
+    set.add("+1" + last10);       
+  }
+  if (d) {
+    set.add(d);
+    set.add("+" + d);
+  }
+  set.delete("");
+  return Array.from(set);
+}
 
 async function mkMatch(person: StreakPerson | null, box?: StreakBox): Promise<MatchResult> {
   const links = {
@@ -41,14 +63,24 @@ export async function lookupByPhone(input: string): Promise<LookupResponse> {
   const norm = normalizeToE164(input);
   if (!norm) return { query: input, normalized: null, matches: [] };
 
-  const want = digits(norm);
-  const want10 = want.slice(-10);
+  const wantDigits = onlyDigits(norm);
+  const want10 = wantDigits.slice(-10);
+  const phoneQueries = buildPhoneQueries(norm);
+  const contactMap = new Map<string, any>();
+  const allBoxRows: any[] = [];
 
-  // 1) Search Streak by digits to get candidate contacts
-  const raw = await searchAll(want).catch(() => null);
-  const { contacts: contactRows } = splitSearchResults(raw || {});
+  for (const q of phoneQueries) {
+    const raw = await searchAll(q).catch(() => null);
+    const { contacts, boxes } = splitSearchResults(raw || {});
+    for (const c of contacts) {
+      const key =
+        c?.key || c?.contactKey || c?.id || c?.personKey || c?.contact_id || "";
+      if (key && !contactMap.has(key)) contactMap.set(key, c);
+    }
+    for (const b of boxes || []) allBoxRows.push(b);
+  }
 
-  // 2) Find contacts whose phones match the number
+  const contactRows = Array.from(contactMap.values());
   const matchedPeople: StreakPerson[] = [];
   for (const row of contactRows) {
     const p = mapSearchContactToPerson(row);
@@ -57,28 +89,26 @@ export async function lookupByPhone(input: string): Promise<LookupResponse> {
       ...(Array.isArray(p.phones) ? p.phones : []),
     ].filter((x): x is string => typeof x === "string");
 
-    const phoneDigits = phonesList.map(d => digits(d));
-    const hit = phoneDigits.some((d) => d === want || d.endsWith(want10));
+    const phoneDigits = phonesList.map(onlyDigits);
+    const hit = phoneDigits.some((d) => d === wantDigits || d.endsWith(want10));
     if (hit) matchedPeople.push(p);
   }
-
-  // Enrich primary person to unlock org/email tokens
   const primaryPerson = matchedPeople[0] || null;
-  let orgNameFromContacts = contactRows.map(contactOrg).find(Boolean) as string | undefined;
+  let orgNameFromContacts =
+    contactRows.map(contactOrg).find(Boolean) as string | undefined;
 
   let enrichedPerson: StreakPerson | null = primaryPerson;
   if (primaryPerson?.key) {
     const full = await getContactFull(primaryPerson.key).catch(() => null);
     if (full) {
       enrichedPerson = { ...primaryPerson, ...full };
-      if (!orgNameFromContacts && full.organization) orgNameFromContacts = full.organization;
+      if (!orgNameFromContacts && full.organization)
+        orgNameFromContacts = full.organization;
     }
   }
 
-  // 3) Candidate boxes (merge from multiple sources)
   const boxMap = new Map<string, StreakBox>();
 
-  // a) boxes linked to matched contacts
   if (matchedPeople.length) {
     for (const p of matchedPeople) {
       const bx = await getBoxesForContact(p.key).catch(() => []);
@@ -86,13 +116,15 @@ export async function lookupByPhone(input: string): Promise<LookupResponse> {
     }
   }
 
-  // Build additional search tokens
+  for (const row of allBoxRows) {
+    const b = mapSearchBox(row);
+    if (b?.key && !boxMap.has(b.key)) boxMap.set(b.key, b);
+  }
+
   const nameTokens: string[] = [];
   if (enrichedPerson?.name) {
     const t = String(enrichedPerson.name).split(/\s+/).filter(Boolean);
-    // Prefer full name first
     nameTokens.push(String(enrichedPerson.name));
-    // Then individual tokens
     for (const part of t) if (part.length >= 2) nameTokens.push(part);
   }
 
@@ -107,53 +139,21 @@ export async function lookupByPhone(input: string): Promise<LookupResponse> {
     }
   }
 
-  const phoneVariants = new Set<string>([want]);
-  if (want10 && want10.length === 10) phoneVariants.add(want10);
+  const extraQueries = new Set<string>([
+    ...(orgNameFromContacts ? [orgNameFromContacts] : []),
+    ...nameTokens,
+    ...emailTokens,
+  ]);
 
-  const orgTokens = new Set<string>();
-  if (orgNameFromContacts) orgTokens.add(orgNameFromContacts);
-
-  // b) by company/organization
-  for (const q of orgTokens) {
-    const rawCompany = await searchAll(q).catch(() => null);
-    const boxesCompany = Array.isArray(rawCompany?.results?.boxes) ? rawCompany.results.boxes : [];
-    for (const row of boxesCompany) {
+  for (const q of extraQueries) {
+    const raw = await searchAll(q).catch(() => null);
+    const boxes = Array.isArray(raw?.results?.boxes) ? raw.results.boxes : [];
+    for (const row of boxes) {
       const b = mapSearchBox(row);
       if (b?.key && !boxMap.has(b.key)) boxMap.set(b.key, b);
     }
   }
 
-  // c) by phone digits and last-10
-  for (const q of phoneVariants) {
-    const rawDigits = await searchAll(q).catch(() => null);
-    const boxesDigits = Array.isArray(rawDigits?.results?.boxes) ? rawDigits.results.boxes : [];
-    for (const row of boxesDigits) {
-      const b = mapSearchBox(row);
-      if (b?.key && !boxMap.has(b.key)) boxMap.set(b.key, b);
-    }
-  }
-
-  // d) by contact name (full + parts)
-  for (const q of nameTokens) {
-    const rawName = await searchAll(q).catch(() => null);
-    const boxesName = Array.isArray(rawName?.results?.boxes) ? rawName.results.boxes : [];
-    for (const row of boxesName) {
-      const b = mapSearchBox(row);
-      if (b?.key && !boxMap.has(b.key)) boxMap.set(b.key, b);
-    }
-  }
-
-  // e) by email (address + domain)
-  for (const q of emailTokens) {
-    const rawEmail = await searchAll(q).catch(() => null);
-    const boxesEmail = Array.isArray(rawEmail?.results?.boxes) ? rawEmail.results.boxes : [];
-    for (const row of boxesEmail) {
-      const b = mapSearchBox(row);
-      if (b?.key && !boxMap.has(b.key)) boxMap.set(b.key, b);
-    }
-  }
-
-  // 4) Sort by recency and assemble matches
   const boxes = Array.from(boxMap.values()).sort(
     (a, b) => (b.lastUpdatedTimestamp ?? 0) - (a.lastUpdatedTimestamp ?? 0)
   );
