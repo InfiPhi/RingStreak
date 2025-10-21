@@ -2,7 +2,10 @@ import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain } from "electron";
 import path from "path";
 import url from "url";
 
-const EVENTS_URL = process.env.RS_EVENTS_URL || "http://localhost:8082/events";
+const EVENTS_URL =
+  process.env.RS_EVENTS_URL ||
+  process.env.RC_EVENTS_URL ||
+  "http://localhost:8082/events";
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -19,8 +22,8 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
-      nodeIntegration: false
-    }
+      nodeIntegration: false,
+    },
   });
 
   const htmlPath = path.join(__dirname, "../ui.html");
@@ -28,7 +31,7 @@ function createWindow() {
     pathname: htmlPath,
     protocol: "file:",
     slashes: true,
-    query: { events: EVENTS_URL }
+    query: { events: EVENTS_URL },
   });
 
   win.loadURL(loadUrl);
@@ -36,20 +39,22 @@ function createWindow() {
 }
 
 function createTray() {
-  const icon = nativeImage.createEmpty(); 
+  const base64Png =
+    "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAABl0RVh0Q3JlYXRpb24gVGltZQAwOS8yMS8yNVw3bYkAAAA1UExURUdwTVdXV4CAgNd3e3Z2dt/f4N/f4Ht7fYCAgNvb4GZmZnd3d8HBwYCAgN/f38/Pz4CAgP///wAAAE4q6zUAAAAQSURBVBjTY2BgZGBgYGBkAAYYAAWwAAGC3Qk9c6xoTQAAAABJRU5ErkJggg==";
+  const icon = nativeImage.createFromDataURL(`data:image/png;base64,${base64Png}`);
   tray = new Tray(icon);
   const menu = Menu.buildFromTemplate([
     {
       label: "Show Test Popup",
       click: () => {
         if (!win) return;
-        win.webContents.send("ringstreak:test");
         win.show();
         win.focus();
-      }
+        win.webContents.send("ringstreak:test");
+      },
     },
     { type: "separator" },
-    { label: "Quit", click: () => app.quit() }
+    { label: "Quit", click: () => app.quit() },
   ]);
   tray.setToolTip("RingStreak");
   tray.setContextMenu(menu);
@@ -64,9 +69,15 @@ ipcMain.on("ringstreak:show", () => {
 app.whenReady().then(() => {
   createWindow();
   createTray();
-  app.setLoginItemSettings({ openAtLogin: true });
+  if (app.isPackaged) {
+    try {
+      app.setLoginItemSettings({ openAtLogin: true });
+    } catch (e) {
+      console.warn("setLoginItemSettings failed:", (e as Error).message);
+    }
+  }
 });
 
 app.on("window-all-closed", () => {
-  // keep the tray app running
+  
 });

@@ -147,6 +147,15 @@
     }
   }
 
+  // Allow the tray menu "Show Test Popup" to bring window up even before any events
+  if (window.ringstreak && typeof window.ringstreak.onTest === "function") {
+    window.ringstreak.onTest(() => {
+      if (window.ringstreak && typeof window.ringstreak.show === "function") {
+        window.ringstreak.show();
+      }
+    });
+  }
+
   const es = new EventSource(EVENTS_URL, { withCredentials:false });
   es.addEventListener("call", (ev)=> {
     try{ render(JSON.parse(ev.data)); }catch(_){}

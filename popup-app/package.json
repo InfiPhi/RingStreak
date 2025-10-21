@@ -2,19 +2,44 @@
   "name": "ringstreak-popup",
   "version": "0.1.0",
   "main": "dist/main.js",
-  "private": true,
+  "type": "module",
   "scripts": {
-    "build": "tsc",
-    "dev": "concurrently \"tsc -w\" \"wait-on dist/main.js && electron .\"",
-    "start": "electron ."
-  },
-  "dependencies": {
-    "electron": "^31.2.0"
+    "dev": "concurrently -k \"tsc -w\" \"electron .\"",
+    "build": "tsc -p tsconfig.json",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win"
   },
   "devDependencies": {
-    "@types/node": "^22.7.4",
+    "@types/electron": "^1.4.38",
+    "@types/node": "^24.9.1",
     "concurrently": "^8.2.2",
-    "typescript": "^5.6.3",
-    "wait-on": "^7.2.0"
+    "electron": "^38.3.0",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.9.3"
+  },
+  "build": {
+    "appId": "com.ringstreak.popup",
+    "productName": "RingStreak",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "ui.html",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "asar": true
   }
 }
