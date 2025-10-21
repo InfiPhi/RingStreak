@@ -1,4 +1,4 @@
-import express from "express";
+import express, { Request, Response } from "express";
 import { env } from "./env.js";
 import { ensureAuth, createOrRenewSubscription } from "./rc.js";
 import { fetchLookup } from "./streakSide.js";
@@ -6,18 +6,18 @@ import { fetchLookup } from "./streakSide.js";
 const app = express();
 app.use(express.json());
 
-app.get("/health", (_req, res) => res.send("ok"));
+app.get("/health", (_req: Request, res: Response) => res.send("ok"));
 
-type Client = { id: number; res: express.Response };
+type Client = { id: number; res: Response };
 let nextId = 1;
 const clients = new Map<number, Client>();
 
-app.get("/events", (req, res) => {
+app.get("/events", (req: Request, res: Response) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.flushHeaders?.();
+  (res as any).flushHeaders?.();
   const id = nextId++;
   clients.set(id, { id, res });
   res.write(`event: ping\ndata: {}\n\n`);
@@ -27,7 +27,9 @@ app.get("/events", (req, res) => {
 function broadcast(type: string, data: any) {
   const payload = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const { res } of clients.values()) {
-    try { res.write(payload); } catch {}
+    try {
+      res.write(payload);
+    } catch {}
   }
 }
 
@@ -42,7 +44,7 @@ function shouldPop(sessionId?: string) {
   return true;
 }
 
-app.post("/rc/webhook", async (req, res) => {
+app.post("/rc/webhook", async (req: Request, res: Response) => {
   const validationToken = req.header("Validation-Token");
   if (validationToken) {
     res.setHeader("Validation-Token", validationToken);
@@ -61,11 +63,11 @@ app.post("/rc/webhook", async (req, res) => {
     const direction: string = (first?.direction || body?.direction || "Inbound").toLowerCase();
     const status: string = (first?.status?.code || first?.status || body?.status || "").toLowerCase();
 
-    const early = new Set(["setup","proceeding","ringing","answered","connected"]);
+    const early = new Set(["setup", "proceeding", "ringing", "answered", "connected"]);
     if (!status || !early.has(status)) return;
 
     const from = first?.from?.phoneNumber || body?.from?.phoneNumber || "";
-    const to   = first?.to?.phoneNumber   || body?.to?.phoneNumber   || "";
+    const to = first?.to?.phoneNumber || body?.to?.phoneNumber || "";
 
     type LookupResult = {
       person?: {
@@ -89,43 +91,49 @@ app.post("/rc/webhook", async (req, res) => {
       }>;
     };
 
-    const lookup: LookupResult = await fetchLookup(from, to, direction, sessionId) as LookupResult;
+    const lookup: LookupResult = (await fetchLookup(from, to, direction, sessionId)) as LookupResult;
 
-      const contactPhones = Array.isArray(lookup?.person?.phones)
-        ? lookup.person.phones
-        : (lookup?.person?.phone ? [lookup.person.phone] : []);
+    const contactPhones = Array.isArray(lookup?.person?.phones)
+      ? lookup.person.phones
+      : lookup?.person?.phone
+      ? [lookup.person.phone]
+      : [];
 
-      const top = lookup?.boxKey ? {
-        company: lookup?.person?.organization || "",
-        contact: lookup?.person?.name || "",
-        contactEmail: lookup?.person?.email || "",
-        contactPhones,
-        project: lookup?.boxName || "",
-        stage: (lookup as any)?.stageName || "",
-        link: lookup?.link || "",
-        preview: lookup?.preview || null,
-        lastEmailSubject: lookup?.lastEmailSubject || null,
-        lastEmailAt: lookup?.lastEmailAt || null
-      } : null;
+    const top = lookup?.boxKey
+      ? {
+          company: lookup?.person?.organization || "",
+          contact: lookup?.person?.name || "",
+          contactEmail: lookup?.person?.email || "",
+          contactPhones,
+          project: lookup?.boxName || "",
+          stage: (lookup as any)?.stageName || "",
+          link: lookup?.link || "",
+          preview: lookup?.preview || null,
+          lastEmailSubject: lookup?.lastEmailSubject || null,
+          lastEmailAt: lookup?.lastEmailAt || null,
+        }
+      : null;
 
-      const others = Array.isArray(lookup?.others) ? lookup.others.map((o: any) => ({
-        project: o?.boxName || "",
-        stage: o?.stageName || "",
-        link: o?.link || ""
-      })) : [];
+    const others = Array.isArray(lookup?.others)
+      ? lookup.others.map((o: any) => ({
+          project: o?.boxName || "",
+          stage: o?.stageName || "",
+          link: o?.link || "",
+        }))
+      : [];
 
-      broadcast("call", { direction, from, to, callId: sessionId, top, others });
+    broadcast("call", { direction, from, to, callId: sessionId, top, others });
 
-      if (top) {
-        const stageNote = top.stage ? ` · Stage: ${top.stage}` : "";
-        console.log(`✅ ${top.project}${stageNote}`);
-        if (top.link) console.log(`   ${top.link}`);
-        if (top.lastEmailSubject) console.log(`   Last email: ${top.lastEmailSubject}`);
-      } else if (lookup?.person?.name) {
-        console.log(`ℹ️ Found contact "${lookup.person.name}" — no box linked yet`);
-      } else {
-        console.log(`🕵️ No match for ${direction === "outbound" ? to : from}`);
-      }
+    if (top) {
+      const stageNote = top.stage ? ` · Stage: ${top.stage}` : "";
+      console.log(`✅ ${top.project}${stageNote}`);
+      if (top.link) console.log(`   ${top.link}`);
+      if (top.lastEmailSubject) console.log(`   Last email: ${top.lastEmailSubject}`);
+    } else if (lookup?.person?.name) {
+      console.log(`ℹ️ Found contact "${lookup.person.name}" — no box linked yet`);
+    } else {
+      console.log(`🕵️ No match for ${direction === "outbound" ? to : from}`);
+    }
 
     console.log(`[RC] ${direction} ${status}  from=${from}  to=${to}  session=${sessionId}`);
   } catch (err: any) {
@@ -133,7 +141,7 @@ app.post("/rc/webhook", async (req, res) => {
   }
 });
 
-app.get("/rc/bootstrap", async (_req, res) => {
+app.get("/rc/bootstrap", async (_req: Request, res: Response) => {
   try {
     await ensureAuth();
     const webhookUrl = `${env.APP_BASE_URL}/rc/webhook`;
@@ -144,13 +152,13 @@ app.get("/rc/bootstrap", async (_req, res) => {
   }
 });
 
-app.post("/rc/debug/simulate", async (req, res) => {
+app.post("/rc/debug/simulate", async (req: Request, res: Response) => {
   try {
-    const body = req.body;
+    const body = req.body as any;
     await fetch(`${env.APP_BASE_URL}/rc/webhook`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
     });
     res.json({ ok: true });
   } catch (e: any) {
