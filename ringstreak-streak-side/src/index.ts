@@ -1,27 +1,31 @@
-import express from "express";
+import express, { Request, Response } from "express";
 import { env } from "./env.js";
 import { normalizeToE164, variants } from "./normalize.js";
 import { lookupByPhone as findMatches } from "./match.js";
 import {
-  searchAll, boxUrl, getLastEmailDetails,
-  getLastEmailPreview, getBox, getContactFull, resolveStageForBox
+  searchAll,
+  boxUrl,
+  getLastEmailDetails,
+  getLastEmailPreview,
+  getContactFull,
+  resolveStageForBox,
 } from "./streak.js";
 
 const app = express();
 app.use(express.json());
 
-app.get("/health", (_req, res) => res.send("ALL GOOD"));
+app.get("/health", (_req: Request, res: Response) => res.send("ALL GOOD"));
 
 const port = Number(env.PORT || 8081);
 const SHARED = env.SHARED_SECRET;
 
-app.get("/debug/normalize", (req, res) => {
+app.get("/debug/normalize", (req: Request, res: Response) => {
   const raw = String(req.query.phone || "");
   const norm = normalizeToE164(raw);
   res.json({ raw, norm, variants: norm ? variants(norm) : [] });
 });
 
-app.get("/lookup", async (req, res) => {
+app.get("/lookup", async (req: Request, res: Response) => {
   try {
     const phone = String(req.query.phone || "");
     if (!phone) return res.status(400).json({ error: "Please provide a phone number :)" });
@@ -32,20 +36,24 @@ app.get("/lookup", async (req, res) => {
   }
 });
 
-async function handleIngest(req: express.Request, res: express.Response) {
+async function handleIngest(req: Request, res: Response) {
   try {
     if (SHARED && req.header("x-ringstreak-secret") !== SHARED) return res.sendStatus(401);
-    const { from, to } = req.body || {};
+
+    const { from, to } = (req.body ?? {}) as { from?: string; to?: string };
     const phone = from || to;
     if (!phone) return res.status(400).json({ ok: false, error: "from/to required" });
 
     const resp = await findMatches(String(phone));
     const matches = Array.isArray(resp?.matches) ? resp.matches : [];
-    const best = matches[0];
-    const box = best?.box as any | undefined;
-    let person = best?.contact as any | undefined;
+    const best: any | undefined = matches[0];
+    const box: any | undefined = best?.box;
+    let person: any | undefined = best?.contact;
 
-    if (person?.key && (!person?.email || !person?.phones || !person?.organization || !String(person.name || "").includes(" "))) {
+    if (
+      person?.key &&
+      (!person?.email || !person?.phones || !person?.organization || !String(person.name || "").includes(" "))
+    ) {
       const full = await getContactFull(String(person.key)).catch(() => null);
       if (full) {
         person = {
@@ -53,7 +61,7 @@ async function handleIngest(req: express.Request, res: express.Response) {
           name: full.name || person.name,
           email: full.email || person.email,
           phones: full.phones || person.phones,
-          organization: full.organization || person.organization
+          organization: full.organization || person.organization,
         };
       }
     }
@@ -77,14 +85,21 @@ async function handleIngest(req: express.Request, res: express.Response) {
       };
     });
 
-    const contactPhones = person?.phones || (person?.phone ? [String(person?.phone)] : undefined);
+    const contactPhones: string[] | undefined =
+      person?.phones || (person?.phone ? [String(person?.phone)] : undefined);
 
     const out = {
       ok: true,
       found: Boolean(box),
       phone: resp.normalized || normalizeToE164(String(phone)) || String(phone),
       person: person
-        ? { key: person.key, name: person.name, email: person.email, organization: person.organization, phones: contactPhones }
+        ? {
+            key: person.key,
+            name: person.name,
+            email: person.email,
+            organization: person.organization,
+            phones: contactPhones,
+          }
         : undefined,
       boxKey: box?.key,
       boxName: box?.name,
@@ -105,7 +120,7 @@ async function handleIngest(req: express.Request, res: express.Response) {
 app.post("/ingest/call", handleIngest);
 app.post("/searchfor/call", handleIngest);
 
-app.get("/debug/search", async (req, res) => {
+app.get("/debug/search", async (req: Request, res: Response) => {
   try {
     const q = String(req.query.q || "");
     const r = await searchAll(q);
@@ -115,6 +130,8 @@ app.get("/debug/search", async (req, res) => {
   }
 });
 
-app.listen(port, () =>
-  console.log(`Streak side listening on ${env.APP_BASE_URL} (env: ${env.NODE_ENV})`)
-);
+app.listen(port, () => {
+  console.log(`Streak side listening on ${env.APP_BASE_URL} (env: ${env.NODE_ENV})`);
+});
+
+export {};
