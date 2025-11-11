@@ -2,14 +2,7 @@ import express, { Request, Response } from "express";
 import { env } from "./env.js";
 import { normalizeToE164, variants } from "./normalize.js";
 import { lookupByPhone as findMatches } from "./match.js";
-import {
-  searchAll,
-  boxUrl,
-  getLastEmailDetails,
-  getLastEmailPreview,
-  getContactFull,
-  resolveStageForBox,
-} from "./streak.js";
+import { searchAll, boxUrl, getLastEmailDetails, getContactFull, resolveStageForBox } from "./streak.js";
 
 const app = express();
 app.use(express.json());
@@ -49,6 +42,8 @@ async function handleIngest(req: Request, res: Response) {
     const best: any | undefined = matches[0];
     const box: any | undefined = best?.box;
     let person: any | undefined = best?.contact;
+    const contactLink: string | undefined =
+      typeof best?.links?.openPerson === "string" ? best.links.openPerson : undefined;
 
     if (
       person?.key &&
@@ -73,7 +68,13 @@ async function handleIngest(req: Request, res: Response) {
     }
 
     const last = box ? await getLastEmailDetails(box.key) : null;
-    const preview = box ? await getLastEmailPreview(box.key) : null;
+    const preview = last
+      ? (() => {
+          const parts = [last.subject, last.snippet].filter(Boolean).map((v) => String(v));
+          const snippet = parts.join(" — ").trim();
+          return snippet || null;
+        })()
+      : null;
 
     const others = matches.slice(1).map((m: any) => {
       const b = m?.box || {};
@@ -108,6 +109,7 @@ async function handleIngest(req: Request, res: Response) {
       lastEmailSubject: last?.subject || null,
       lastEmailAt: last?.timestamp ? new Date(Number(last.timestamp)).toISOString() : null,
       preview,
+      contactLink,
       others,
     };
 

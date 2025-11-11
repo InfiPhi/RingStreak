@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain } from "electron";
+import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell } from "electron";
 import path from "path";
 import url from "url";
 
@@ -6,6 +6,19 @@ const EVENTS_URL =
   process.env.RS_EVENTS_URL ||
   process.env.RC_EVENTS_URL ||
   "http://localhost:8082/events";
+
+const SIGN_IN_URL = (() => {
+  if (process.env.RC_SIGN_IN_URL) return process.env.RC_SIGN_IN_URL;
+  try {
+    const events = new URL(EVENTS_URL);
+    events.pathname = "/rc/auth/start";
+    events.search = "";
+    events.hash = "";
+    return events.toString();
+  } catch {
+    return "http://localhost:8082/rc/auth/start";
+  }
+})();
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -44,6 +57,10 @@ function createTray() {
   const icon = nativeImage.createFromDataURL(`data:image/png;base64,${base64Png}`);
   tray = new Tray(icon);
   const menu = Menu.buildFromTemplate([
+    {
+      label: "Sign in to RingCentral",
+      click: () => shell.openExternal(SIGN_IN_URL),
+    },
     {
       label: "Show Test Popup",
       click: () => {

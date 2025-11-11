@@ -12,8 +12,41 @@ export function normalizeToE164(raw?: string | null) {
 }
 
 export function variants(e164: string) {
+  const digitsOnly = e164.replace(/\D+/g, "");
   const noPlus = e164.replace(/^\+/, "");
-  const local10 = e164.startsWith("+1") ? e164.slice(2) : e164;   // default for canadian numbers
-  const spaced = e164.replace(/(\+\d{1,3})(\d{3})(\d{3})(\d{4})/, "$1 $2 $3 $4");
-  return Array.from(new Set([e164, noPlus, local10, spaced]));
+  const local10 =
+    digitsOnly.length === 11 && digitsOnly.startsWith("1")
+      ? digitsOnly.slice(1)
+      : digitsOnly.length === 10
+      ? digitsOnly
+      : "";
+
+  const all = new Set<string>();
+  const grouped = e164.replace(/(\+\d{1,3})(\d{3})(\d{3})(\d{4})/, "$1 $2 $3 $4");
+
+  [e164, noPlus, digitsOnly, grouped, local10, digitsOnly ? `+${digitsOnly}` : ""].forEach((v) => {
+    if (v) all.add(v);
+  });
+
+  if (local10.length === 10) {
+    const area = local10.slice(0, 3);
+    const prefix = local10.slice(3, 6);
+    const line = local10.slice(6);
+
+    [
+      `(${area}) ${prefix}-${line}`,
+      `(${area})${prefix}-${line}`,
+      `${area}-${prefix}-${line}`,
+      `${area} ${prefix} ${line}`,
+      `${area}.${prefix}.${line}`,
+      `${area}${prefix}${line}`,
+      `+1-${area}-${prefix}-${line}`,
+      `+1 ${area} ${prefix} ${line}`,
+      `+1 ${area}-${prefix}-${line}`,
+      `+1 (${area}) ${prefix}-${line}`,
+      `+1(${area}) ${prefix}-${line}`,
+    ].forEach((v) => all.add(v));
+  }
+
+  return Array.from(all);
 }

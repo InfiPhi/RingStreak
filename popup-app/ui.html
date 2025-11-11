@@ -98,17 +98,22 @@
     els.direction.textContent = (payload?.direction||"").replace(/\b\w/g, c=>c.toUpperCase());
 
     if (!t) {
-      els.project.textContent = "No project linked";
+      els.project.textContent = "Contact not found in StreakCRM";
       els.contact.textContent = "";
       els.company.textContent = "";
       els.contactMeta.innerHTML = "";
       els.stage.textContent = "—";
       els.link.href = "#";
+      els.link.textContent = "—";
+      els.link.classList.add("muted");
+      els.link.removeAttribute("target");
       els.lastSubject.textContent = "—";
       els.lastWhen.textContent = "";
       els.preview.textContent = "";
     } else {
-      els.project.textContent = t.project || "—";
+      const contactOnly = Boolean(t.contactOnly);
+      const hasLink = Boolean(t.link);
+      els.project.textContent = t.project || (contactOnly ? t.contact || "Known contact" : "—");
       els.contact.textContent = t.contact ? `Contact: ${t.contact}` : "";
       els.company.textContent = t.company ? `Company: ${t.company}` : "";
 
@@ -118,8 +123,16 @@
         els.contactMeta.appendChild(pill(t.contactPhones.join(" · ")));
       }
 
-      els.stage.textContent = t.stage || "—";
-      els.link.href = t.link || "#";
+      els.stage.textContent = contactOnly ? "No linked box yet" : t.stage || "—";
+      els.link.textContent = contactOnly ? "Open contact in Streak" : "Open in Streak";
+      els.link.href = hasLink ? t.link : "#";
+      if (hasLink) {
+        els.link.setAttribute("target", "_blank");
+        els.link.classList.remove("muted");
+      } else {
+        els.link.removeAttribute("target");
+        els.link.classList.add("muted");
+      }
       els.lastSubject.textContent = t.lastEmailSubject || "—";
       els.lastWhen.textContent = fmtWhen(t.lastEmailAt) || "";
       els.preview.textContent = t.preview ? truncate(String(t.preview), 220) : "";
@@ -136,7 +149,7 @@
       a.textContent = o.project || "(Untitled)";
       const stage = document.createElement("div");
       stage.className = "stage";
-      stage.textContent = o.stage || "";
+      stage.textContent = o.stage || o.stageName || "";
       div.appendChild(a);
       div.appendChild(stage);
       els.others.appendChild(div);
