@@ -1,5 +1,4 @@
-import crypto from "crypto";
-import express, { type Request, type Response } from "express";
+import express, { type Response } from "express";
 import { env } from "./env.js";
 import {
   buildAuthUrl,
@@ -10,13 +9,7 @@ import {
 import { fetchLookup } from "./streakSide.js";
 
 const app = express();
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      (req as any)._rawBody = Buffer.from(buf);
-    },
-  })
-);
+app.use(express.json());
 
 app.get("/health", (_req, res) => res.send("ok"));
 
@@ -42,31 +35,6 @@ function broadcast(type: string, data: any) {
     try {
       res.write(payload);
     } catch {}
-  }
-}
-
-function getRawBody(req: Request): Buffer {
-  return ((req as any)._rawBody as Buffer) || Buffer.alloc(0);
-}
-
-function verifyWebhookSignature(req: Request): boolean {
-  const header =
-    req.header("x-ringcentral-signature-v2") ||
-    req.header("x-ringcentral-signature") ||
-    req.header("validation-signature") ||
-    "";
-  if (!env.RC_WEBHOOK_SECRET) return true;
-  const normalized = header.startsWith("sha256=") ? header.slice(7) : header;
-  if (!normalized) return false;
-  const body = getRawBody(req);
-  const expectedBase64 = crypto.createHmac("sha256", env.RC_WEBHOOK_SECRET).update(body).digest("base64");
-  const expected = Buffer.from(expectedBase64, "base64");
-  const provided = Buffer.from(normalized, "base64");
-  if (!expected.length || expected.length !== provided.length) return false;
-  try {
-    return crypto.timingSafeEqual(expected, provided);
-  } catch {
-    return false;
   }
 }
 
@@ -111,9 +79,6 @@ app.post("/rc/webhook", async (req, res) => {
   if (validationToken) {
     res.setHeader("Validation-Token", validationToken);
     return res.sendStatus(200);
-  }
-  if (!verifyWebhookSignature(req)) {
-    return res.status(401).json({ error: "Invalid webhook signature" });
   }
   res.status(200).json({ ok: true });
 
@@ -208,16 +173,13 @@ app.get("/rc/bootstrap", async (_req, res) => {
 
 app.post("/rc/debug/simulate", async (req, res) => {
   try {
-    const body = req.body;
-    const serialized = JSON.stringify(body ?? {});
-    const signature = crypto.createHmac("sha256", env.RC_WEBHOOK_SECRET || "").update(serialized).digest("base64");
+    const body = req.body ?? {};
     await fetch(`${env.APP_BASE_URL}/rc/webhook`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-ringcentral-signature-v2": signature,
       },
-      body: serialized,
+      body: JSON.stringify(body),
     });
     res.json({ ok: true });
   } catch (e: any) {

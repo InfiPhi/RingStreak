@@ -2,10 +2,9 @@ import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell } from "ele
 import path from "path";
 import url from "url";
 
-const EVENTS_URL =
-  process.env.RS_EVENTS_URL ||
-  process.env.RC_EVENTS_URL ||
-  "http://localhost:8082/events";
+const DEFAULT_EVENTS = "https://ringstreak-rc.onrender.com/events";
+
+const EVENTS_URL = process.env.RS_EVENTS_URL || process.env.RC_EVENTS_URL || DEFAULT_EVENTS;
 
 const SIGN_IN_URL = (() => {
   if (process.env.RC_SIGN_IN_URL) return process.env.RC_SIGN_IN_URL;
@@ -19,6 +18,8 @@ const SIGN_IN_URL = (() => {
     return "http://localhost:8082/rc/auth/start";
   }
 })();
+
+const AUTO_SIGN_IN = String(process.env.POPUP_AUTO_SIGNIN || "") === "1";
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -84,8 +85,15 @@ ipcMain.on("ringstreak:show", () => {
 });
 
 app.whenReady().then(() => {
+  console.log(`[popup] events: ${EVENTS_URL}`);
+  console.log(`[popup] sign-in: ${SIGN_IN_URL}`);
   createWindow();
   createTray();
+  if (AUTO_SIGN_IN) {
+    setTimeout(() => {
+      Promise.resolve(shell.openExternal(SIGN_IN_URL)).catch(() => {});
+    }, 400);
+  }
   if (app.isPackaged) {
     try {
       app.setLoginItemSettings({ openAtLogin: true });
@@ -95,6 +103,4 @@ app.whenReady().then(() => {
   }
 });
 
-app.on("window-all-closed", () => {
-  
-});
+app.on("window-all-closed", () => {});

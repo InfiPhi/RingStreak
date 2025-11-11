@@ -69,8 +69,16 @@ export async function lookupByPhone(input: string): Promise<LookupResponse> {
   const contactMap = new Map<string, any>();
   const allBoxRows: any[] = [];
 
-  for (const q of phoneQueries) {
-    const raw = await searchAll(q).catch(() => null);
+  async function fetchSearches(queries: string[]) {
+    const tasks = queries.map(async (q) => {
+      const raw = await searchAll(q).catch(() => null);
+      return { query: q, raw };
+    });
+    return Promise.all(tasks);
+  }
+
+  const phoneResults = await fetchSearches(phoneQueries);
+  for (const { raw } of phoneResults) {
     const { contacts, boxes } = splitSearchResults(raw || {});
     for (const c of contacts) {
       const key =
@@ -145,8 +153,8 @@ export async function lookupByPhone(input: string): Promise<LookupResponse> {
     ...emailTokens,
   ]);
 
-  for (const q of extraQueries) {
-    const raw = await searchAll(q).catch(() => null);
+  const extraResults = await fetchSearches(Array.from(extraQueries));
+  for (const { raw } of extraResults) {
     const boxes = Array.isArray(raw?.results?.boxes) ? raw.results.boxes : [];
     for (const row of boxes) {
       const b = mapSearchBox(row);

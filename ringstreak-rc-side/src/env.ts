@@ -8,7 +8,7 @@ const EnvSchema = z.object({
   RC_SERVER: z.string().url(),
   RC_CLIENT_ID: z.string(),
   RC_CLIENT_SECRET: z.string(),
-  RC_WEBHOOK_SECRET: z.string().default("dev-secret"),
+  RC_WEBHOOK_SECRET: z.string().optional(),
   REDIRECT_PATH: z.string().default("/rc/callback"),
   DATA_DIR: z.string().optional(),
   SESSION_SECRET: z.string().optional(),

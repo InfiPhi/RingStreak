@@ -76,7 +76,6 @@ export async function createOrRenewSubscription(webhookUrl: string, existingPlat
     deliveryMode: {
       transportType: "WebHook",
       address: webhookUrl,
-      verificationToken: env.RC_WEBHOOK_SECRET || undefined,
     },
     expiresIn: 7 * 24 * 60 * 60,
   };

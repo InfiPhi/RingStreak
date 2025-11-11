@@ -2,7 +2,6 @@
   "name": "ringstreak-popup",
   "version": "0.1.0",
   "main": "dist/main.js",
-  "type": "module",
   "scripts": {
     "dev": "concurrently -k \"tsc -w\" \"electron .\"",
     "build": "tsc -p tsconfig.json",
