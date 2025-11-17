@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell } from "electron";
 import path from "path";
 import url from "url";
@@ -6,23 +7,45 @@ const DEFAULT_EVENTS = "https://ringstreak-rc.onrender.com/events";
 
 const EVENTS_URL = process.env.RS_EVENTS_URL || process.env.RC_EVENTS_URL || DEFAULT_EVENTS;
 
-const SIGN_IN_URL = (() => {
-  if (process.env.RC_SIGN_IN_URL) return process.env.RC_SIGN_IN_URL;
+const RS_USER_ID = process.env.RS_USER_ID || process.env.USER || "demo-user";
+
+function deriveUrl(pathname: string, fallback: string) {
+  if (pathname.startsWith("http")) return pathname;
   try {
     const events = new URL(EVENTS_URL);
-    events.pathname = "/rc/auth/start";
+    events.pathname = pathname;
     events.search = "";
     events.hash = "";
     return events.toString();
   } catch {
-    return "http://localhost:8082/rc/auth/start";
+    return fallback;
   }
-})();
+}
+
+const SIGN_IN_URL =
+  process.env.RC_SIGN_IN_URL || deriveUrl("/rc/auth/start", "http://localhost:8082/rc/auth/start");
+const AUTH_STATUS_URL =
+  process.env.RC_AUTH_STATUS_URL || deriveUrl("/rc/auth/status", "http://localhost:8082/rc/auth/status");
 
 const AUTO_SIGN_IN = String(process.env.POPUP_AUTO_SIGNIN || "") === "1";
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
+
+async function maybeAutoSignIn() {
+  if (!AUTO_SIGN_IN) return;
+  try {
+    const statusUrl = new URL(AUTH_STATUS_URL);
+    statusUrl.searchParams.set("uid", RS_USER_ID);
+    const resp = await fetch(statusUrl.toString()).catch(() => null);
+    const json = await resp?.json().catch(() => null);
+    if (!json?.signedIn) {
+      await shell.openExternal(SIGN_IN_URL);
+    }
+  } catch {
+    await shell.openExternal(SIGN_IN_URL);
+  }
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -45,7 +68,13 @@ function createWindow() {
     pathname: htmlPath,
     protocol: "file:",
     slashes: true,
-    query: { events: EVENTS_URL },
+    query: {
+      events: EVENTS_URL,
+      uid: RS_USER_ID,
+      auth: AUTH_STATUS_URL,
+      signIn: SIGN_IN_URL,
+      auto: AUTO_SIGN_IN ? "1" : "0",
+    },
   });
 
   win.loadURL(loadUrl);
@@ -87,13 +116,10 @@ ipcMain.on("ringstreak:show", () => {
 app.whenReady().then(() => {
   console.log(`[popup] events: ${EVENTS_URL}`);
   console.log(`[popup] sign-in: ${SIGN_IN_URL}`);
+  console.log(`[popup] user: ${RS_USER_ID}`);
   createWindow();
   createTray();
-  if (AUTO_SIGN_IN) {
-    setTimeout(() => {
-      Promise.resolve(shell.openExternal(SIGN_IN_URL)).catch(() => {});
-    }, 400);
-  }
+  maybeAutoSignIn();
   if (app.isPackaged) {
     try {
       app.setLoginItemSettings({ openAtLogin: true });

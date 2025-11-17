@@ -1,48 +1,17 @@
-import { SDK } from "@ringcentral/sdk";
-import type Platform from "@ringcentral/sdk/lib/platform/Platform";
-import type { AuthData } from "@ringcentral/sdk/lib/platform/Auth";
+import fetch from "node-fetch";
 import { env } from "./env.js";
-import { loadToken, saveToken } from "./tokenStore.js";
+import { RcSubscription, RcToken, getSub, getToken, putSub, putToken, removeSub } from "./store.js";
 
-let baseSdk: SDK | null = null;
+const AUTH_EARLY_MS = 60 * 1000;
+const SUB_RENEW_EARLY_MS = 24 * 60 * 60 * 1000;
 
-export function rcSdk() {
-  if (baseSdk) return baseSdk;
-  baseSdk = new SDK({
-    server: env.RC_SERVER,
-    clientId: env.RC_CLIENT_ID,
-    clientSecret: env.RC_CLIENT_SECRET,
-  });
-  return baseSdk;
+function authHeaders() {
+  const basic = Buffer.from(`${env.RC_CLIENT_ID}:${env.RC_CLIENT_SECRET}`).toString("base64");
+  return { Authorization: `Basic ${basic}` };
 }
 
-export function getPlatform(): Platform {
-  return rcSdk().platform();
-}
-
-export async function getAuthedPlatform(): Promise<Platform | null> {
-  const platform = getPlatform();
-  const stored = loadToken();
-  if (!stored) return null;
-  await platform.auth().setData({
-    token_type: stored.token_type || "Bearer",
-    access_token: stored.access_token,
-    refresh_token: stored.refresh_token,
-    expires_in: stored.expires_in ? String(stored.expires_in) : undefined,
-    expire_time: stored.expires_at,
-  });
-  try {
-    const valid = await platform.auth().accessTokenValid();
-    if (!valid) {
-      await platform.refresh();
-      const data = await platform.auth().data();
-      persistAuthData(data);
-    }
-  } catch (e) {
-    console.warn("Refresh failed, please sign in again:", (e as Error).message);
-    return null;
-  }
-  return platform;
+function rcUrl(pathname: string) {
+  return `${env.RC_SERVER}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
 }
 
 export function buildAuthUrl(): string {
@@ -56,20 +25,108 @@ export function buildAuthUrl(): string {
   return `${env.RC_SERVER}/restapi/oauth/authorize?${params.toString()}`;
 }
 
-export async function loginWithAuthCode(code: string): Promise<void> {
-  const platform = getPlatform();
+export async function loginWithAuthCode(code: string): Promise<{ userId: string; token: RcToken }> {
   const redirectUri = `${env.APP_BASE_URL}${env.REDIRECT_PATH}`;
-  await platform.login({ code, redirect_uri: redirectUri });
-  const data = await platform.auth().data();
-  if (!data.access_token || !data.refresh_token) {
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: redirectUri,
+  });
+
+  const tokenResp = await fetch(rcUrl("/restapi/oauth/token"), {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+
+  if (!tokenResp.ok) {
+    const text = await tokenResp.text().catch(() => "");
+    throw new Error(`OAuth exchange failed: ${tokenResp.status} ${text}`);
+  }
+
+  const data: any = await tokenResp.json();
+  if (!data?.access_token || !data?.refresh_token) {
     throw new Error("OAuth exchange did not return tokens");
   }
-  persistAuthData(data);
+
+  const expiresIn = Number(data.expires_in || data.expiresIn || 0);
+  const ttl = Math.max(expiresIn * 1000, AUTH_EARLY_MS);
+  const expires_at = Date.now() + Math.max(ttl - AUTH_EARLY_MS, 0);
+  const userId = await fetchUserId(data.access_token);
+
+  const token: RcToken = {
+    userId,
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    expires_at,
+    scope: data.scope,
+  };
+
+  putToken(token);
+  return { userId, token };
 }
 
-export async function createOrRenewSubscription(webhookUrl: string, existingPlatform?: Platform) {
-  const platform = existingPlatform || (await getAuthedPlatform());
-  if (!platform) throw new Error("Not authenticated; please sign in first");
+export async function refreshUserToken(userId: string): Promise<RcToken> {
+  const existing = getToken(userId);
+  if (!existing) throw new Error(`No token found for user ${userId}`);
+
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: existing.refresh_token,
+  });
+
+  const resp = await fetch(rcUrl("/restapi/oauth/token"), {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`Refresh failed for ${userId}: ${resp.status} ${text}`);
+  }
+
+  const data: any = await resp.json();
+  if (!data?.access_token) {
+    throw new Error(`Refresh missing access_token for ${userId}`);
+  }
+
+  const expiresIn = Number(data.expires_in || data.expiresIn || 0);
+  const ttl = Math.max(expiresIn * 1000, AUTH_EARLY_MS);
+  const updated: RcToken = {
+    userId,
+    access_token: data.access_token,
+    refresh_token: data.refresh_token || existing.refresh_token,
+    expires_at: Date.now() + Math.max(ttl - AUTH_EARLY_MS, 0),
+    scope: data.scope || existing.scope,
+  };
+  putToken(updated);
+  return updated;
+}
+
+export async function ensureValidAccess(userId: string): Promise<RcToken> {
+  const token = getToken(userId);
+  if (!token) throw new Error(`User ${userId} not signed in`);
+  if (token.expires_at - Date.now() <= AUTH_EARLY_MS) {
+    return refreshUserToken(userId);
+  }
+  return token;
+}
+
+export async function createOrRenewUserSubscription(
+  userId: string,
+  webhookUrl: string
+): Promise<RcSubscription> {
+  const token = await ensureValidAccess(userId);
+  const current = getSub(userId);
+  const stillValid = current && current.expiresAt - Date.now() > SUB_RENEW_EARLY_MS;
+  if (current && stillValid) return current;
 
   const body = {
     eventFilters: ["/restapi/v1.0/account/~/extension/~/telephony/sessions"],
@@ -79,21 +136,57 @@ export async function createOrRenewSubscription(webhookUrl: string, existingPlat
     },
     expiresIn: 7 * 24 * 60 * 60,
   };
-  const resp = await platform.post("/restapi/v1.0/subscription", body);
-  return resp.json();
+
+  const endpoint = current?.id
+    ? rcUrl(`/restapi/v1.0/subscription/${current.id}`)
+    : rcUrl("/restapi/v1.0/subscription");
+  const method = current?.id ? "PUT" : "POST";
+
+  const resp = await fetch(endpoint, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    // If renew fails (e.g., expired), try a fresh create
+    if (current?.id) {
+      removeSub(userId);
+      return createOrRenewUserSubscription(userId, webhookUrl);
+    }
+    const text = await resp.text().catch(() => "");
+    throw new Error(`Subscription failed for ${userId}: ${resp.status} ${text}`);
+  }
+
+  const data: any = await resp.json();
+  const expiresIn = Number(data?.expiresIn || data?.expires_in || 0);
+  const expiresAt =
+    data?.expirationTime && typeof data.expirationTime === "string"
+      ? new Date(data.expirationTime).getTime()
+      : Date.now() + Math.max(expiresIn * 1000, SUB_RENEW_EARLY_MS);
+
+  const saved: RcSubscription = {
+    userId,
+    id: String(data?.id),
+    expiresAt,
+  };
+  putSub(saved);
+  return saved;
 }
 
-function persistAuthData(data: AuthData) {
-  if (!data.access_token || !data.refresh_token) return;
-  const expiresIn = data.expires_in ? Number(data.expires_in) : undefined;
-  const expireTime = data.expire_time || (expiresIn ? Date.now() + expiresIn * 1000 : undefined);
-  saveToken({
-    access_token: data.access_token,
-    refresh_token: data.refresh_token,
-    token_type: data.token_type,
-    expires_in: expiresIn,
-    expires_at: expireTime,
-    owner_id: data.owner_id,
-    endpoint_id: data.endpoint_id,
+async function fetchUserId(accessToken: string): Promise<string> {
+  const resp = await fetch(rcUrl("/restapi/v1.0/account/~/extension/~"), {
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`Failed to fetch user identity: ${resp.status} ${text}`);
+  }
+  const data: any = await resp.json();
+  const userId = data?.id || data?.extensionId || data?.extensionNumber || data?.ownerId;
+  if (!userId) throw new Error("Unable to resolve user identity from RingCentral");
+  return String(userId);
 }

@@ -17,6 +17,9 @@
     "electron-builder": "^24.13.3",
     "typescript": "^5.9.3"
   },
+  "dependencies": {
+    "dotenv": "^9.0.2"
+  },
   "build": {
     "appId": "com.ringstreak.popup",
     "productName": "RingStreak",

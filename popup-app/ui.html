@@ -65,7 +65,23 @@
 <script>
 (function(){
   const params = new URLSearchParams(location.search);
-  const EVENTS_URL = params.get("events");
+  const UID = params.get("uid") || "";
+  const SIGN_IN_URL = params.get("signIn") || "";
+  const AUTO_SIGN_IN = params.get("auto") === "1";
+
+  function withUser(urlString) {
+    if (!urlString) return "";
+    try {
+      const u = new URL(urlString);
+      if (UID) u.searchParams.set("uid", UID);
+      return u.toString();
+    } catch {
+      return urlString;
+    }
+  }
+
+  const EVENTS_URL = withUser(params.get("events"));
+  const AUTH_STATUS_URL = withUser(params.get("auth") || "");
 
   const els = {
     project: document.getElementById("project"),
@@ -169,11 +185,53 @@
     });
   }
 
-  const es = new EventSource(EVENTS_URL, { withCredentials:false });
-  es.addEventListener("call", (ev)=> {
-    try{ render(JSON.parse(ev.data)); }catch(_){}
-  });
-  es.addEventListener("ping", ()=>{});
+  let es;
+  let esErrorCount = 0;
+  let lastSignIn = 0;
+
+  function maybeLaunchSignIn() {
+    if (!SIGN_IN_URL || !AUTO_SIGN_IN) return;
+    const now = Date.now();
+    if (now - lastSignIn < 60_000) return;
+    lastSignIn = now;
+    window.open(SIGN_IN_URL, "_blank");
+  }
+
+  async function checkAuthStatus(triggerSignIn = false) {
+    if (!AUTH_STATUS_URL) return { signedIn: true };
+    try {
+      const resp = await fetch(AUTH_STATUS_URL, { credentials: "omit" });
+      const json = await resp.json().catch(() => ({}));
+      const signedIn = Boolean(json?.signedIn);
+      if (!signedIn && triggerSignIn) maybeLaunchSignIn();
+      return { signedIn, expiresAt: json?.expiresAt };
+    } catch {
+      if (triggerSignIn) maybeLaunchSignIn();
+      return { signedIn: false };
+    }
+  }
+
+  function startEvents(){
+    if (!EVENTS_URL) return;
+    if (es) es.close();
+    esErrorCount = 0;
+    es = new EventSource(EVENTS_URL, { withCredentials:false });
+    es.addEventListener("call", (ev)=> {
+      try{ render(JSON.parse(ev.data)); }catch(_){}
+    });
+    es.addEventListener("ping", ()=>{});
+    es.onopen = () => { esErrorCount = 0; };
+    es.onerror = () => {
+      esErrorCount += 1;
+      if (esErrorCount >= 3) {
+        esErrorCount = 0;
+        checkAuthStatus(true);
+      }
+    };
+  }
+
+  checkAuthStatus(true).finally(() => startEvents());
+  setInterval(() => checkAuthStatus(true), 60_000);
 })();
 </script>
 </body>
