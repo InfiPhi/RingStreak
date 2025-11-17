@@ -18,7 +18,8 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "dotenv": "^9.0.2"
+    "dotenv": "^9.0.2",
+    "electron-store": "^8.1.0"
   },
   "build": {
     "appId": "com.ringstreak.popup",

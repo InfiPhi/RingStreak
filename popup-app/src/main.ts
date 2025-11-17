@@ -1,7 +1,10 @@
 import "dotenv/config";
 import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell } from "electron";
+import Store from "electron-store";
 import path from "path";
 import url from "url";
+import https from "https";
+import http from "http";
 
 const DEFAULT_EVENTS = "https://ringstreak-rc.onrender.com/events";
 
@@ -24,26 +27,68 @@ function deriveUrl(pathname: string, fallback: string) {
 
 const SIGN_IN_URL =
   process.env.RC_SIGN_IN_URL || deriveUrl("/rc/auth/start", "http://localhost:8082/rc/auth/start");
-const AUTH_STATUS_URL =
-  process.env.RC_AUTH_STATUS_URL || deriveUrl("/rc/auth/status", "http://localhost:8082/rc/auth/status");
+const STATUS_URL = (() => {
+  try {
+    const u = new URL(EVENTS_URL);
+    u.pathname = "/rc/auth/status";
+    u.search = "";
+    u.hash = "";
+    return u.toString();
+  } catch {
+    return "http://localhost:8082/rc/auth/status";
+  }
+})();
+const AUTH_STATUS_URL = process.env.RC_AUTH_STATUS_URL || STATUS_URL;
 
 const AUTO_SIGN_IN = String(process.env.POPUP_AUTO_SIGNIN || "") === "1";
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 
-async function maybeAutoSignIn() {
-  if (!AUTO_SIGN_IN) return;
-  try {
-    const statusUrl = new URL(AUTH_STATUS_URL);
-    statusUrl.searchParams.set("uid", RS_USER_ID);
-    const resp = await fetch(statusUrl.toString()).catch(() => null);
-    const json = await resp?.json().catch(() => null);
-    if (!json?.signedIn) {
-      await shell.openExternal(SIGN_IN_URL);
+const store = new Store<{ lastSignInPromptAt?: number }>();
+const PROMPT_COOLDOWN_MS = 12 * 24 * 60 * 60 * 1000;
+const STATUS_POLL_MS = 60 * 1000;
+
+function fetchJson(urlStr: string): Promise<any> {
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(urlStr);
+      const mod = u.protocol === "https:" ? https : http;
+      const req = mod.request(urlStr, { method: "GET" }, (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            resolve(null);
+          }
+        });
+      });
+      req.on("error", () => resolve(null));
+      req.end();
+    } catch {
+      resolve(null);
     }
-  } catch {
-    await shell.openExternal(SIGN_IN_URL);
+  });
+}
+
+async function maybePromptSignIn() {
+  if (!win) return;
+
+  const last = store.get("lastSignInPromptAt") || 0;
+  const tooSoon = Date.now() - last < PROMPT_COOLDOWN_MS;
+  if (tooSoon) return;
+
+  const status = await fetchJson(STATUS_URL);
+  const signedIn = Boolean(status && status.signedIn === true);
+  if (signedIn) return;
+
+  try {
+    shell.openExternal(SIGN_IN_URL);
+    store.set("lastSignInPromptAt", Date.now());
+  } catch (e) {
+    console.warn("Failed to open sign-in URL:", (e as Error).message);
   }
 }
 
@@ -92,6 +137,13 @@ function createTray() {
       click: () => shell.openExternal(SIGN_IN_URL),
     },
     {
+      label: "Re-authenticate",
+      click: () => {
+        store.set("lastSignInPromptAt", 0);
+        shell.openExternal(SIGN_IN_URL);
+      },
+    },
+    {
       label: "Show Test Popup",
       click: () => {
         if (!win) return;
@@ -119,7 +171,8 @@ app.whenReady().then(() => {
   console.log(`[popup] user: ${RS_USER_ID}`);
   createWindow();
   createTray();
-  maybeAutoSignIn();
+  maybePromptSignIn();
+  setInterval(maybePromptSignIn, STATUS_POLL_MS);
   if (app.isPackaged) {
     try {
       app.setLoginItemSettings({ openAtLogin: true });

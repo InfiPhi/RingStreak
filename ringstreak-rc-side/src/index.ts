@@ -91,6 +91,7 @@ app.get(env.REDIRECT_PATH || "/rc/callback", async (req, res) => {
     const code = String(req.query.code || "");
     if (!code) return res.status(400).send("Missing code");
     const { userId, token } = await loginWithAuthCode(code);
+    (global as any).__ringstreakSignedIn = true;
     const webhookUrl = `${env.APP_BASE_URL}/rc/webhook`;
     const sub = await createOrRenewUserSubscription(userId, webhookUrl);
     res
@@ -108,11 +109,18 @@ app.get(env.REDIRECT_PATH || "/rc/callback", async (req, res) => {
 });
 
 app.get("/rc/auth/status", (req, res) => {
-  const uid = typeof req.query.uid === "string" ? req.query.uid.trim() : "";
-  if (!uid) return res.status(400).json({ ok: false, error: "uid is required" });
-  const token = allTokens().find((t) => t.userId === uid);
-  if (!token) return res.json({ ok: true, signedIn: false, userId: uid });
-  res.json({ ok: true, signedIn: true, userId: uid, expiresAt: token.expires_at });
+  try {
+    const uid = typeof req.query.uid === "string" ? req.query.uid.trim() : "";
+    if (!uid) {
+      const signedIn = (global as any).__ringstreakSignedIn === true;
+      return res.json({ signedIn });
+    }
+    const token = allTokens().find((t) => t.userId === uid);
+    if (!token) return res.json({ ok: true, signedIn: false, userId: uid });
+    res.json({ ok: true, signedIn: true, userId: uid, expiresAt: token.expires_at });
+  } catch (e: any) {
+    res.status(500).json({ signedIn: false, error: e?.message || "status failed" });
+  }
 });
 
 app.get("/rc/status", (_req, res) => {
